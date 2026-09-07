@@ -36,6 +36,17 @@
         "responses": { "204": { "description": "Deleted" }, "409": { "description": "Polar is active" } }
       }
     },
+    "/polars/{id}/curves": {
+      "get": {
+        "operationId": "getPolarCurves",
+        "summary": "Sampled render-ready TWS curves (SI units) over the full valid TWA range",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "step", "in": "query", "required": false, "schema": { "type": "number", "default": 5 }, "description": "Angular sampling step in degrees" }
+        ],
+        "responses": { "200": { "description": "Curves per TWS" }, "400": { "description": "Invalid step or polar table" }, "404": { "description": "Not found" } }
+      }
+    },
     "/polars/{id}/rename": {
       "post": {
         "operationId": "renamePolar",

@@ -68,13 +68,13 @@ async function loadPolars() {
 let polarCanvas = null
 
 async function viewPolar(id) {
-  const resource = await api(`polars/${id}`)
+  const curves = await api(`polars/${id}/curves?step=5`)
   document.getElementById('viewerEmpty').style.display = 'none'
   const canvas = document.getElementById('polarCanvas')
   canvas.style.display = 'block'
   if (!polarCanvas) polarCanvas = new window.PolarCanvas(canvas)
   polarCanvas.resize()
-  polarCanvas.loadResource(resource)
+  polarCanvas.loadCurves(curves)
 }
 
 async function setActivePolar(id) {

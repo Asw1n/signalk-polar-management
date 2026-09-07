@@ -33,7 +33,8 @@
     "displayName": "Polar Management"
   },
   "dependencies": {
-    "polar-format": "^1.0.0"
+    "polar-format": "^1.0.0",
+    "polar-math": "^0.1.0"
   },
   "author": "aswin.bouwmeester@gmail.com",
   "license": "Apache-2.0",

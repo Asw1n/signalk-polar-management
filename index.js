@@ -4,6 +4,7 @@ const path = require('path')
 const PolarStore = require('./lib/PolarStore')
 const { ImportService, ImportError } = require('./lib/import/ImportService')
 const { ExportService, ExportError } = require('./lib/export/ExportService')
+const { buildCurves, DEFAULT_STEP_DEG } = require('./lib/CurveService')
 
 const ACTIVE_POLAR_PATH = 'polars.activePolar'
 const PERFORMANCE_FACTOR_PATH = 'polars.performanceFactor'
@@ -157,6 +158,21 @@ module.exports = (app) => {
         res.json({ id: req.params.id, ...store.get(req.params.id) })
       } catch (e) {
         res.status(404).json({ error: e.message })
+      }
+    })
+
+    router.get('/polars/:id/curves', (req, res) => {
+      const step = req.query.step === undefined ? DEFAULT_STEP_DEG : Number(req.query.step)
+      let table
+      try {
+        table = store.get(req.params.id)
+      } catch (e) {
+        return res.status(404).json({ error: e.message })
+      }
+      try {
+        res.json({ id: req.params.id, ...buildCurves(table, step) })
+      } catch (e) {
+        res.status(400).json({ error: e.message })
       }
     })
 

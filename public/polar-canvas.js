@@ -501,32 +501,20 @@
   }
 
   /**
-   * Build {twsList, curves} from a canonical polar-format resource (SI units)
-   * and load it. No live overlay — this plugin only displays stored data.
-   * @param {Object} resource - canonical polarTable resource
+   * Build {twsList, curves} from a GET /polars/:id/curves response — curves are
+   * already sampled by polar-math over the full valid TWA range (SI units).
+   * No live overlay — this plugin only displays stored data.
+   * @param {Object} response - { curves: [{tws, points:[{twa,tbs}], beat, run}] }
    */
-  PolarCanvas.prototype.loadResource = function (resource) {
-    const twsAxis = resource.axes.tws
-    const twaAxis = resource.axes.twa
-    const matrix  = resource.values.boatSpeedMatrix
-    const derivedByTws = new Map((resource.derived?.rows || []).map(row => [row.tws, row]))
-
+  PolarCanvas.prototype.loadCurves = function (response) {
     const curves = {}
-    twsAxis.forEach((tws, twsIndex) => {
-      const derived = derivedByTws.get(tws)
-      curves[tws] = {
-        tws,
-        // Skip zero-placeholder cells (e.g. angles below the beat angle) —
-        // otherwise the line would run back to the graph's origin.
-        points: twaAxis
-          .map((twa, twaIndex) => ({ twa, tbs: matrix[twsIndex][twaIndex] }))
-          .filter(pt => pt.tbs > 0),
-        beat: derived?.beat || null,
-        run: derived?.run || null
-      }
-    })
-
-    this.setLibraryData(twsAxis, curves)
+    const twsList = []
+    for (const curve of response.curves || []) {
+      if (!curve.points || curve.points.length === 0) continue
+      twsList.push(curve.tws)
+      curves[curve.tws] = curve
+    }
+    this.setLibraryData(twsList, curves)
   }
 
   // expose

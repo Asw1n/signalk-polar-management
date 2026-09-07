@@ -8,3 +8,6 @@
   `vessels.self.polars.activePolar`.
 - Added a webapp-adjustable polar performance factor published at
   `vessels.self.polars.performanceFactor`, with metadata for both plugin-owned Signal K output paths.
+- Added `GET /polars/:id/curves`, which uses `polar-math` to sample each TWS curve at a fixed angular
+  step (5° by default) across the full valid TWA range, so the webapp draws complete polar lines
+  including pinch and run extrapolation.
