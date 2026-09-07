@@ -1,0 +1,107 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Polar Management Plugin API",
+    "version": "0.1.0",
+    "description": "REST API for storing, importing, exporting and selecting canonical polar tables.\nAll speed values are in m/s, all angles in radians (polar-format canonical units).\nThe same 'polars' resource type is also exposed via the standard Signal K Resource Provider API at /signalk/v2/api/resources/polars/<id>."
+  },
+  "servers": [
+    { "url": "/plugins/signalk-polar-management" }
+  ],
+  "paths": {
+    "/polars": {
+      "get": {
+        "operationId": "listPolars",
+        "summary": "List all stored polars with light metadata",
+        "responses": { "200": { "description": "Array of polar summaries" } }
+      }
+    },
+    "/polars/{id}": {
+      "get": {
+        "operationId": "getPolar",
+        "summary": "Get a stored canonical polar resource",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Canonical polar resource" }, "404": { "description": "Not found" } }
+      },
+      "put": {
+        "operationId": "putPolar",
+        "summary": "Create or replace a canonical polar resource",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Saved" }, "400": { "description": "Validation error" } }
+      },
+      "delete": {
+        "operationId": "deletePolar",
+        "summary": "Delete a stored polar (not allowed while active)",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Deleted" }, "409": { "description": "Polar is active" } }
+      }
+    },
+    "/polars/{id}/rename": {
+      "post": {
+        "operationId": "renamePolar",
+        "summary": "Rename a stored polar",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Renamed" } }
+      }
+    },
+    "/polars/{id}/export/{format}": {
+      "get": {
+        "operationId": "exportPolar",
+        "summary": "Export a stored polar as json, jieter or expedition text",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "format", "in": "path", "required": true, "schema": { "type": "string", "enum": ["json", "jieter", "expedition"] } }
+        ],
+        "responses": { "200": { "description": "Exported file" } }
+      }
+    },
+    "/activePolar": {
+      "get": {
+        "operationId": "getActivePolar",
+        "summary": "Get the currently active polar id",
+        "responses": { "200": { "description": "{ id }" } }
+      },
+      "put": {
+        "operationId": "setActivePolar",
+        "summary": "Set the active polar id; publishes vessels.self.polars.activePolar",
+        "responses": { "200": { "description": "{ id }" } }
+      }
+    },
+    "/imports/formats": {
+      "get": { "operationId": "listImportFormats", "summary": "List supported text import formats", "responses": { "200": { "description": "OK" } } }
+    },
+    "/imports/text/{format}": {
+      "post": {
+        "operationId": "importText",
+        "summary": "Import a polar from pasted/uploaded text in a given format",
+        "parameters": [{ "name": "format", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "{ id, resource }" }, "400": { "description": "Parse or validation error" } }
+      }
+    },
+    "/imports/sources": {
+      "get": { "operationId": "listImportSources", "summary": "List supported external import sources (e.g. ORC)", "responses": { "200": { "description": "OK" } } }
+    },
+    "/imports/sources/{source}/search": {
+      "get": {
+        "operationId": "searchImportSource",
+        "summary": "Search an external source (e.g. ORC active certificates)",
+        "parameters": [
+          { "name": "source", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "q", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Array of matches" } }
+      }
+    },
+    "/imports/sources/{source}/items/{externalId}": {
+      "post": {
+        "operationId": "importFromSource",
+        "summary": "Import a polar by external id from a source (e.g. ORC certificate)",
+        "parameters": [
+          { "name": "source", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "externalId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "{ id, resource }" } }
+      }
+    }
+  }
+}

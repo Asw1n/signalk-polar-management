@@ -1,0 +1,47 @@
+{
+  "name": "signalk-polar-management",
+  "version": "0.1.0",
+  "description": "Stores, imports, exports and selects canonical polar tables as a Signal K resource provider.",
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-category-utility",
+    "signalk-webapp"
+  ],
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "public/",
+    "openApi.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/**/*.test.js",
+    "prepublishOnly": "npm test"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "signalk-server": ">=2.28.0"
+  },
+  "signalk-plugin-enabled-by-default": true,
+  "signalk": {
+    "displayName": "Polar Management"
+  },
+  "dependencies": {
+    "polar-format": "^1.0.0"
+  },
+  "author": "aswin.bouwmeester@gmail.com",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Asw1n/signalk-polar-management.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Asw1n/signalk-polar-management/issues"
+  }
+}

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polar Management</title>
+
+  <!-- Dynamically inject the SignalK admin UI stylesheet.
+       Reads the Vite manifest (SK server >= 2.27.0); falls back to scraping
+       the admin root page on older servers. -->
+  <script>
+    (async () => {
+      const appendStylesheet = (href) => {
+        const el = document.createElement('link')
+        el.rel  = 'stylesheet'
+        el.href = href
+        document.head.appendChild(el)
+      }
+      let manifestFailure = 'manifest contained no CSS assets'
+      try {
+        const res = await fetch('/admin/.vite/manifest.json')
+        if (res.ok) {
+          const manifest = await res.json()
+          const stylesheets = new Set()
+          for (const entry of Object.values(manifest)) {
+            if (entry.file?.endsWith('.css')) stylesheets.add(entry.file)
+            if (entry.isEntry) for (const css of entry.css ?? []) stylesheets.add(css)
+          }
+          if (stylesheets.size > 0) {
+            for (const css of stylesheets) appendStylesheet('/admin/' + css)
+            return
+          }
+        } else {
+          manifestFailure = `manifest request returned ${res.status}`
+        }
+      } catch (e) {
+        manifestFailure = `manifest request failed: ${e.message}`
+      }
+      try {
+        const res  = await fetch('/')
+        const html = await res.text()
+        const doc  = new DOMParser().parseFromString(html, 'text/html')
+        const link = doc.querySelector('link[rel="stylesheet"]')
+        if (link) {
+          appendStylesheet(new URL(link.getAttribute('href'), res.url).href)
+          return
+        }
+        console.warn(`[polar-management] Could not load SignalK admin stylesheet: ${manifestFailure}; legacy admin page contained no stylesheet link.`)
+      } catch (e) {
+        console.warn(`[polar-management] Could not load SignalK admin stylesheet: ${manifestFailure}; legacy fallback failed: ${e.message}`)
+      }
+    })()
+  </script>
+
+  <link rel="stylesheet" href="main.css">
+</head>
+<body class="app header-fixed">
+
+  <header class="app-header navbar navbar-light bg-white">
+    <div class="d-flex align-items-center">
+      <span class="app-title">Polar Management</span>
+    </div>
+    <span id="message" class="text-danger small ms-auto me-3"></span>
+  </header>
+
+  <div class="app-body">
+    <main class="main p-3">
+
+      <div class="card mb-3">
+        <div class="card-header">Stored polars</div>
+        <div class="card-body">
+          <table class="table table-sm table-borderless align-middle">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Name</th>
+                <th>Boat type</th>
+                <th>Sail no.</th>
+                <th>Year</th>
+                <th>Source</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="polarRows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header">View polar</div>
+        <div class="card-body">
+          <div id="viewerEmpty" class="text-muted">Select a polar above to view it.</div>
+          <canvas id="polarCanvas" class="polar-canvas" style="display:none; max-width:500px;"></canvas>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header">Import from file</div>
+        <div class="card-body">
+          <div class="form-group mb-2">
+            <label>Format</label>
+            <select id="importFormat" class="form-select"></select>
+          </div>
+          <div class="form-group mb-2">
+            <label>File</label>
+            <input type="file" id="importFile" class="form-control">
+          </div>
+          <div class="form-group mb-2">
+            <label>Or paste text</label>
+            <textarea id="importText" class="form-control" rows="4"></textarea>
+          </div>
+          <button id="importSubmit" class="btn btn-primary btn-sm">Import</button>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header">Import from ORC</div>
+        <div class="card-body">
+          <div class="input-group mb-2">
+            <input type="text" id="orcQuery" class="form-control" placeholder="Sail number, yacht name...">
+            <button id="orcSearch" class="btn btn-secondary btn-sm">Search</button>
+          </div>
+          <table class="table table-sm">
+            <tbody id="orcResults"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="polar-canvas.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

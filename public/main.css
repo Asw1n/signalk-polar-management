@@ -1,0 +1,35 @@
+/* ─── Suppress SignalK navbar-brand logo/text injected by CoreUI ────────────── */
+.app-header .navbar-brand {
+  background-image: none !important;
+  width: auto !important;
+}
+.app-header .navbar-brand::before,
+.app-header .navbar-brand::after {
+  display: none !important;
+  content: none !important;
+}
+
+/* ─── App title ────────────────────────────────────────────────────────────── */
+.app-title {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: #29363D;
+  white-space: nowrap;
+}
+
+/* ─── Polar canvas ──────────────────────────────────────────────────────────── */
+.polar-canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 4px;
+  --polar-bg: transparent;
+  --polar-grid:      #ccc;
+  --polar-grid-dash: #bbb;
+  --polar-label:     #888;
+  --polar-unit:      #aaa;
+  --polar-live-curve: rgba(0,0,0,0.8);
+  --polar-dot-bg:    #fff;
+  --polar-dot-polar: #555;
+  --polar-dot-bsp:   #999;
+}
