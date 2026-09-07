@@ -6,6 +6,8 @@ const { ImportService, ImportError } = require('./lib/import/ImportService')
 const { ExportService, ExportError } = require('./lib/export/ExportService')
 
 const ACTIVE_POLAR_PATH = 'polars.activePolar'
+const PERFORMANCE_FACTOR_PATH = 'polars.performanceFactor'
+const DEFAULT_PERFORMANCE_FACTOR = 1
 const RESOURCE_TYPE = 'polars'
 
 module.exports = (app) => {
@@ -14,10 +16,48 @@ module.exports = (app) => {
   let importService = null
   let exportService = null
   let activePolarPublished = false
+  let performanceFactorPublished = false
 
   const plugin = {
     id: 'signalk-polar-management',
     name: 'Polar Management'
+  }
+
+  function sanitizePerformanceFactor(value) {
+    const factor = Number(value)
+    if (!Number.isFinite(factor)) return DEFAULT_PERFORMANCE_FACTOR
+    return Math.min(1, Math.max(0, factor))
+  }
+
+  function isValidPerformanceFactor(value) {
+    const factor = Number(value)
+    return Number.isFinite(factor) && factor >= 0 && factor <= 1
+  }
+
+  function publishMetadata() {
+    app.handleMessage(plugin.id, {
+      updates: [{
+        meta: [
+          {
+            path: ACTIVE_POLAR_PATH,
+            value: {
+              type: 'object',
+              displayName: 'Active polar',
+              description: 'Pointer to the selected polar resource.'
+            }
+          },
+          {
+            path: PERFORMANCE_FACTOR_PATH,
+            value: {
+              type: 'number',
+              units: 'ratio',
+              displayName: 'Polar performance factor',
+              description: 'Multiplier applied by polar consumers to reduce polar speed values.'
+            }
+          }
+        ]
+      }]
+    })
   }
 
   function publishActivePolar(id) {
@@ -36,11 +76,30 @@ module.exports = (app) => {
     activePolarPublished = false
   }
 
+  function publishPerformanceFactor(value) {
+    app.handleMessage(plugin.id, {
+      updates: [{ values: [{ path: PERFORMANCE_FACTOR_PATH, value }] }]
+    })
+    performanceFactorPublished = true
+  }
+
+  function clearPerformanceFactor() {
+    if (!performanceFactorPublished) return
+    app.handleMessage(plugin.id, {
+      updates: [{ values: [{ path: PERFORMANCE_FACTOR_PATH, value: null }] }]
+    })
+    performanceFactorPublished = false
+  }
+
   plugin.start = (options) => {
-    settings = { activePolar: '', ...options }
+    settings = { activePolar: '', performanceFactor: DEFAULT_PERFORMANCE_FACTOR, ...options }
+    settings.performanceFactor = sanitizePerformanceFactor(settings.performanceFactor)
     store = new PolarStore(path.join(app.getDataDirPath(), 'polars'))
     importService = new ImportService(store)
     exportService = new ExportService()
+
+    publishMetadata()
+    publishPerformanceFactor(settings.performanceFactor)
 
     if (settings.activePolar && store.exists(settings.activePolar)) {
       publishActivePolar(settings.activePolar)
@@ -80,6 +139,7 @@ module.exports = (app) => {
 
   plugin.stop = () => {
     clearActivePolar()
+    clearPerformanceFactor()
     store = null
     importService = null
     exportService = null
@@ -154,6 +214,22 @@ module.exports = (app) => {
         if (id) publishActivePolar(id)
         else clearActivePolar()
         res.json({ id: settings.activePolar || null })
+      })
+    })
+
+    router.get('/performanceFactor', (req, res) => {
+      res.json({ value: settings.performanceFactor })
+    })
+
+    router.put('/performanceFactor', (req, res) => {
+      if (!isValidPerformanceFactor(req.body?.value)) {
+        return res.status(400).json({ error: 'Performance factor must be between 0 and 1' })
+      }
+      settings.performanceFactor = sanitizePerformanceFactor(req.body?.value)
+      app.savePluginOptions(settings, (err) => {
+        if (err) return res.status(500).json({ error: err.message })
+        publishPerformanceFactor(settings.performanceFactor)
+        res.json({ value: settings.performanceFactor })
       })
     })
 

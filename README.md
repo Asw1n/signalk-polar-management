@@ -26,9 +26,12 @@ npm install signalk-polar-management
   (`GET/PUT/POST/DELETE /signalk/v2/api/resources/polars/<id>`).
 - Publishes the active polar as `vessels.self.polars.activePolar = { href: "/resources/polars/<id>" }`.
   The active polar id itself is a persisted plugin setting; the Signal K path is the plugin's output only.
+- Publishes the polar performance factor as `vessels.self.polars.performanceFactor`, where `1.0` means
+  unchanged polar speed and `0.95` means consumers should use 95% of the stored polar speeds.
 - Provides a webapp (`/signalk-polar-management/`) to:
   - list, rename, and delete stored polars
   - select the active polar
+  - set the polar performance factor
   - view a polar's boat-speed curves (only derived beat/run targets that are present in the canonical
     document are shown; nothing is computed by this plugin)
   - import a polar from a file (Jieter/ORC matrix text, Expedition text) or from the ORC active
@@ -46,6 +49,7 @@ See [openApi.json](openApi.json) for the full reference, exposed in the Admin UI
 | `POST /polars/:id/rename` | Rename a stored polar |
 | `GET /polars/:id/export/:format` | Export as `json`, `jieter`, or `expedition` |
 | `GET/PUT /activePolar` | Read or set the active polar id |
+| `GET/PUT /performanceFactor` | Read or set the polar performance factor |
 | `GET /imports/formats` / `POST /imports/text/:format` | List/import supported text formats |
 | `GET /imports/sources` / `GET /imports/sources/:source/search` / `POST /imports/sources/:source/items/:externalId` | External sources (ORC) |
 

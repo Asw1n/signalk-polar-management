@@ -6,3 +6,5 @@
   (Jieter/ORC matrix text, Expedition text, ORC active certificates), export (JSON, Jieter, Expedition),
   and a management webapp. Registers as a Signal K Resource Provider for type `polars` and publishes
   `vessels.self.polars.activePolar`.
+- Added a webapp-adjustable polar performance factor published at
+  `vessels.self.polars.performanceFactor`, with metadata for both plugin-owned Signal K output paths.

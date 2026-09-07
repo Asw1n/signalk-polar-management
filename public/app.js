@@ -5,6 +5,7 @@
 const BASE = '/plugins/signalk-polar-management'
 
 let activePolarId = null
+let performanceFactor = 1
 
 function setMessage(text, isError) {
   const el = document.getElementById('message')
@@ -24,6 +25,12 @@ async function api(path, options) {
 async function loadActivePolar() {
   const { id } = await api('activePolar')
   activePolarId = id
+}
+
+async function loadPerformanceFactor() {
+  const { value } = await api('performanceFactor')
+  performanceFactor = Number.isFinite(value) ? value : 1
+  document.getElementById('performanceFactor').value = Math.round(performanceFactor * 100)
 }
 
 async function loadPolars() {
@@ -78,6 +85,22 @@ async function setActivePolar(id) {
   })
   activePolarId = id
   setMessage(`Active polar set to '${id}'`)
+}
+
+async function savePerformanceFactor() {
+  const percent = Number(document.getElementById('performanceFactor').value)
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+    setMessage('Enter a performance factor from 0 to 100%', true)
+    return
+  }
+  const { value } = await api('performanceFactor', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: percent / 100 })
+  })
+  performanceFactor = value
+  document.getElementById('performanceFactor').value = Math.round(performanceFactor * 100)
+  setMessage(`Performance factor set to ${Math.round(performanceFactor * 100)}%`)
 }
 
 async function renamePolar(id) {
@@ -180,6 +203,8 @@ document.addEventListener('change', async (event) => {
 
 document.getElementById('importSubmit').addEventListener('click', () => doImport().catch(e => setMessage(e.message, true)))
 document.getElementById('orcSearch').addEventListener('click', () => doOrcSearch().catch(e => setMessage(e.message, true)))
+document.getElementById('performanceFactorSave').addEventListener('click', () => savePerformanceFactor().catch(e => setMessage(e.message, true)))
 
 loadImportFormats().catch(e => setMessage(e.message, true))
 loadPolars().catch(e => setMessage(e.message, true))
+loadPerformanceFactor().catch(e => setMessage(e.message, true))

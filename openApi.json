@@ -67,6 +67,18 @@
         "responses": { "200": { "description": "{ id }" } }
       }
     },
+    "/performanceFactor": {
+      "get": {
+        "operationId": "getPerformanceFactor",
+        "summary": "Get the polar performance factor",
+        "responses": { "200": { "description": "{ value } where 1.0 means unchanged polar speed" } }
+      },
+      "put": {
+        "operationId": "setPerformanceFactor",
+        "summary": "Set the polar performance factor; publishes vessels.self.polars.performanceFactor",
+        "responses": { "200": { "description": "{ value }" } }
+      }
+    },
     "/imports/formats": {
       "get": { "operationId": "listImportFormats", "summary": "List supported text import formats", "responses": { "200": { "description": "OK" } } }
     },

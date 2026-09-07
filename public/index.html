@@ -87,6 +87,20 @@
       </div>
 
       <div class="card mb-3">
+        <div class="card-header">Performance factor</div>
+        <div class="card-body">
+          <div class="form-group mb-2">
+            <label for="performanceFactor">Polar speed</label>
+            <div class="input-group" style="max-width: 14rem;">
+              <input type="number" id="performanceFactor" class="form-control" min="0" max="100" step="1">
+              <span class="input-group-text">%</span>
+            </div>
+          </div>
+          <button id="performanceFactorSave" class="btn btn-primary btn-sm">Save</button>
+        </div>
+      </div>
+
+      <div class="card mb-3">
         <div class="card-header">View polar</div>
         <div class="card-body">
           <div id="viewerEmpty" class="text-muted">Select a polar above to view it.</div>
