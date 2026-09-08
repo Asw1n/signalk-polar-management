@@ -7,6 +7,7 @@
 - Added polar validation and copy endpoints, offline-aware external import handling,
   and a reorganized management webapp with separate active, management, and import pages.
 - Added the Polar Management icon to Signal K plugin metadata and the published package.
+- Added sortable polar tables to the active-polar and management views.
 
 ### Changed
 

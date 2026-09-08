@@ -38,9 +38,86 @@ let lastTextImportError = ''
 let lastOrcImportError = ''
 let validation = null // { id, valid, errors } — Management inspection results
 let activePage = 'active'
+let polarSort = { key: 'name', direction: 'asc' }
+
+const POLAR_COLUMNS = [
+  { key: 'name', label: 'Name', value: polar => polar.name || polar.id },
+  { key: 'boatType', label: 'Boat type', value: polar => polar.boatType || '' },
+  { key: 'sailnumber', label: 'Sail no.', value: polar => polar.sailnumber || '' },
+  { key: 'year', label: 'Year', value: polar => polar.year || '' },
+  { key: 'source', label: 'Source', value: polar => polar.source || '' }
+]
 
 function polarById(id) {
   return polars.find(p => p.id === id)
+}
+
+function sortedPolars() {
+  const column = POLAR_COLUMNS.find(candidate => candidate.key === polarSort.key) || POLAR_COLUMNS[0]
+  const multiplier = polarSort.direction === 'asc' ? 1 : -1
+  return [...polars].sort((left, right) => {
+    const leftValue = String(column.value(left))
+    const rightValue = String(column.value(right))
+    return leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: 'base' }) * multiplier
+  })
+}
+
+function buildPolarTable({ selectable = false, actions = false } = {}) {
+  const table = document.createElement('table')
+  table.className = 'table table-sm table-borderless align-middle mb-0 polar-list'
+  const sortIndicator = (key) => {
+    if (polarSort.key !== key) return ''
+    return polarSort.direction === 'asc' ? ' &#9650;' : ' &#9660;'
+  }
+  table.innerHTML = `
+    <thead>
+      <tr>
+        ${selectable ? '<th scope="col" style="width:2rem"></th>' : ''}
+        ${POLAR_COLUMNS.map(column => `
+          <th scope="col" aria-sort="${polarSort.key === column.key ? (polarSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}">
+            <button type="button" class="btn btn-link btn-sm p-0 text-reset text-decoration-none polar-sort" data-sort-key="${column.key}">
+              ${column.label}${sortIndicator(column.key)}
+            </button>
+          </th>
+        `).join('')}
+        ${actions ? '<th scope="col"></th>' : ''}
+      </tr>
+    </thead>
+    <tbody>
+      ${sortedPolars().map(polar => `
+        <tr>
+          ${selectable ? `<td><input type="radio" name="activePolarRadio" data-id="${escapeHtml(polar.id)}" ${polar.id === activeStatus.id ? 'checked' : ''}></td>` : ''}
+          ${POLAR_COLUMNS.map(column => `<td>${escapeHtml(column.value(polar))}</td>`).join('')}
+          ${actions ? `
+            <td class="polar-actions">
+              <button class="btn btn-link btn-sm" data-action="rename" data-id="${escapeHtml(polar.id)}">Rename</button>
+              <button class="btn btn-link btn-sm" data-action="copy" data-id="${escapeHtml(polar.id)}">Copy</button>
+              <div class="dropdown d-inline">
+                <button class="btn btn-link btn-sm dropdown-toggle" type="button" data-dropdown-toggle>Export</button>
+                <div class="dropdown-menu dropdown-menu-right">
+                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/json" download>Canonical JSON</a>
+                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/jieter" download>Jieter text</a>
+                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/expedition" download>Expedition text</a>
+                </div>
+              </div>
+              <button class="btn btn-link btn-sm" data-action="validate" data-id="${escapeHtml(polar.id)}">Validate</button>
+              <button class="btn btn-link btn-sm text-danger" data-action="delete" data-id="${escapeHtml(polar.id)}">Delete</button>
+            </td>
+          ` : ''}
+        </tr>
+      `).join('')}
+    </tbody>
+  `
+  table.querySelectorAll('[data-sort-key]').forEach(button => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.sortKey
+      polarSort = polarSort.key === key
+        ? { key, direction: polarSort.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: 'asc' }
+      rerender()
+    })
+  })
+  return table
 }
 
 // ── Data loaders ──────────────────────────────────────────────────────────────
@@ -233,19 +310,7 @@ function buildActivePage() {
     empty.textContent = 'No stored polars. Import one from the Import page first.'
     selection.body.appendChild(empty)
   } else {
-    const table = document.createElement('table')
-    table.className = 'table table-sm table-borderless align-middle mb-0'
-    table.innerHTML = `
-      <tbody>
-        ${polars.map(p => `
-          <tr>
-            <td style="width:2rem"><input type="radio" name="activePolarRadio" data-id="${escapeHtml(p.id)}" ${p.id === activeStatus.id ? 'checked' : ''}></td>
-            <td>${escapeHtml(p.name || p.id)}</td>
-            <td class="text-muted">${escapeHtml(p.boatType || '')}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    `
+    const table = buildPolarTable({ selectable: true })
     selection.body.appendChild(table)
     table.addEventListener('change', async (event) => {
       if (event.target.name !== 'activePolarRadio') return
@@ -282,40 +347,7 @@ function buildManagementPage() {
   const stored = cardEl('Stored polars')
   wrap.appendChild(stored.card)
 
-  const table = document.createElement('table')
-  table.className = 'table table-sm table-borderless align-middle mb-0'
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th>Name</th><th>Boat type</th><th>Sail no.</th><th>Year</th><th>Source</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-      ${polars.map(p => `
-        <tr>
-          <td>${escapeHtml(p.name || p.id)}</td>
-          <td>${escapeHtml(p.boatType || '')}</td>
-          <td>${escapeHtml(p.sailnumber || '')}</td>
-          <td>${escapeHtml(p.year || '')}</td>
-          <td>${escapeHtml(p.source || '')}</td>
-          <td class="polar-actions">
-            <button class="btn btn-link btn-sm" data-action="rename" data-id="${escapeHtml(p.id)}">Rename</button>
-            <button class="btn btn-link btn-sm" data-action="copy" data-id="${escapeHtml(p.id)}">Copy</button>
-            <div class="dropdown d-inline">
-              <button class="btn btn-link btn-sm dropdown-toggle" type="button" data-dropdown-toggle>Export</button>
-              <div class="dropdown-menu dropdown-menu-right">
-                <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(p.id)}/export/json" download>Canonical JSON</a>
-                <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(p.id)}/export/jieter" download>Jieter text</a>
-                <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(p.id)}/export/expedition" download>Expedition text</a>
-              </div>
-            </div>
-            <button class="btn btn-link btn-sm" data-action="validate" data-id="${escapeHtml(p.id)}">Validate</button>
-            <button class="btn btn-link btn-sm text-danger" data-action="delete" data-id="${escapeHtml(p.id)}">Delete</button>
-          </td>
-        </tr>
-      `).join('')}
-    </tbody>
-  `
+  const table = buildPolarTable({ actions: true })
   stored.body.appendChild(table)
 
   table.addEventListener('click', async (event) => {
