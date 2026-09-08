@@ -32,7 +32,7 @@
   "signalk-plugin-enabled-by-default": true,
   "signalk": {
     "displayName": "Polar Management",
-    "appIcon": "icon.png"
+    "appIcon": "./icon.png"
   },
   "dependencies": {
     "polar-format": "^1.0.0",

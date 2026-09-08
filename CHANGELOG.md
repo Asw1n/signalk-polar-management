@@ -14,6 +14,10 @@
 - Added optional performance-factor scaling to sampled polar curves, including beat, run,
   and maximum-speed targets.
 
+### Fixed
+
+- Made the Polar Management icon available in both the Signal K AppStore and the webapp header.
+
 ## 0.1.0 - Unreleased
 
 - Initial extraction from `signalk-polar-performance-plugin`: polar storage, selection, import
