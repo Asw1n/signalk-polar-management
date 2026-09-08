@@ -1,6 +1,6 @@
 {
   "name": "signalk-polar-management",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Stores, imports, exports and selects polar tables as a Signal K resource provider.",
   "keywords": [
     "signalk-node-server-plugin",
@@ -15,6 +15,7 @@
     "index.js",
     "lib/",
     "public/",
+    "docs/",
     "openApi.json",
     "icon.png",
     "README.md",
@@ -32,11 +33,16 @@
   "signalk-plugin-enabled-by-default": true,
   "signalk": {
     "displayName": "Polar Management",
-    "appIcon": "./icon.png"
+    "appIcon": "./icon.png",
+    "screenshots": [
+      "./docs/overview.png",
+      "./docs/management.png",
+      "./docs/import.png"
+    ]
   },
   "dependencies": {
     "polar-format": "^1.0.0",
-    "polar-math": "^0.1.0"
+    "polar-math": "^1.0.0"
   },
   "author": "Aswin Bouwmeester <aswin.bouwmeester@gmail.com>",
   "license": "Apache-2.0",
@@ -46,5 +52,6 @@
   },
   "bugs": {
     "url": "https://github.com/Asw1n/signalk-polar-management/issues"
-  }
+  },
+  "homepage": "https://github.com/Asw1n/signalk-polar-management#readme"
 }

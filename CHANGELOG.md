@@ -1,24 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 - 2026-09-09
+
+Initial release.
 
 ### Added
-
-- Added polar validation and copy endpoints, offline-aware external import handling,
-  and a reorganized management webapp with separate active, management, and import pages.
-- Added the Polar Management icon to Signal K plugin metadata and the published package.
-- Added sortable polar tables to the active-polar and management views.
-
-### Changed
-
-- Added optional performance-factor scaling to sampled polar curves, including beat, run,
-  and maximum-speed targets.
-
-### Fixed
-
-- Made the Polar Management icon available in both the Signal K AppStore and the webapp header.
-
-## 0.1.0 - Unreleased
 
 - Initial extraction from `signalk-polar-performance-plugin`: polar storage, selection, import
   (Jieter/ORC matrix text, Expedition text, ORC active certificates), export (JSON, Jieter, Expedition),
@@ -29,3 +15,13 @@
 - Added `GET /polars/:id/curves`, which uses `polar-math` to sample each TWS curve at a fixed angular
   step (5° by default) across the full valid TWA range, so the webapp draws complete polar lines
   including pinch and run extrapolation.
+- Added polar validation and copy endpoints, offline-aware external import handling,
+  and a reorganized management webapp with separate active, management, and import pages.
+- Added the Polar Management icon to Signal K plugin metadata and the published package.
+- Added sortable polar tables to the active-polar and management views.
+- Added optional performance-factor scaling to sampled polar curves, including beat, run,
+  and maximum-speed targets.
+
+### Fixed
+
+- Made the Polar Management icon available in both the Signal K AppStore and the webapp header.

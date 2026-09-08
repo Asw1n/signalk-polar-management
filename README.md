@@ -1,60 +1,41 @@
-# signalk-polar-management
+# Polar management
 
-Signal K plugin that stores, imports, exports, and selects **canonical polar tables**, following the
-[`polar-format`](https://github.com/Asw1n/polar-format) specification (SI units: `tws=m/s`, `twa=rad`, `boatSpeed=m/s`).
+This plugin helps you keep your boat's sailing polar data organised in Signal K.
 
-This plugin owns polar **storage and selection** only — it does not compute performance, VMG, or optimum
-angles. Compute plugins (e.g. wind-performance) resolve the active polar via the Signal K Resource API and
-the `vessels.self.polars.activePolar` pointer published by this plugin.
+If you are not sure what a polar is, think of it as the speed your boat should make in different wind conditions. It is used by sailing apps to estimate performance, compare routes, and help with decisions on the water.
 
-## Compatible Signal K server versions
+This plugin makes it easy to store more than one polar, pick the one you want to use, and manage it from a simple interface.
 
-`>=2.28.0`
+## Install from the Signal K AppStore
 
-## Installation
+1. Open your Signal K admin UI.
+2. Go to the AppStore.
+3. Search for "Polar Management".
+4. Click Install.
+5. Follow any normal Signal K prompts to finish the install.
 
-Install via the Signal K AppStore, or:
+No manual command-line installation is needed for the normal AppStore workflow.
 
-```shell
-cd ~/.signalk
-npm install signalk-polar-management
-```
+## Find a polar for your boat
 
-## What it does
+Once the plugin is installed, the next step is to load a polar for your boat.
 
-- Registers a Signal K **Resource Provider** for resource type `polars`
-  (`GET/PUT/POST/DELETE /signalk/v2/api/resources/polars/<id>`).
-- Publishes the active polar as `vessels.self.polars.activePolar = { href: "/resources/polars/<id>" }`.
-  The active polar id itself is a persisted plugin setting; the Signal K path is the plugin's output only.
-- Publishes the polar performance factor as `vessels.self.polars.performanceFactor`, where `1.0` means
-  unchanged polar speed and `0.95` means consumers should use 95% of the stored polar speeds.
-- Provides a webapp (`/signalk-polar-management/`) to:
-  - list, rename, and delete stored polars
-  - select the active polar
-  - set the polar performance factor
-  - view a polar's boat-speed curves (only derived beat/run targets that are present in the canonical
-    document are shown; nothing is computed by this plugin)
-  - import a polar from a file (Jieter/ORC matrix text, Expedition text) or from the ORC active
-    certificates database
-  - export a polar as canonical JSON, Jieter text, or Expedition text
+1. Open the Polar Management page in Signal K.
+2. Choose the import option.
+3. Use the ORC import.
+4. Search by your boat model or hull type.
+5. Pick the closest match and import it.
 
-## HTTP endpoints
+This is the easiest way to get a suitable polar for your boat before using other sailing apps that depend on it.
 
-See [openApi.json](openApi.json) for the full reference, exposed in the Admin UI's API docs.
+## What this plugin does
 
-| Method & path | Purpose |
-|---|---|
-| `GET /polars` | List stored polars with metadata |
-| `GET/PUT/DELETE /polars/:id` | Read, replace, or delete a stored polar |
-| `POST /polars/:id/rename` | Rename a stored polar |
-| `GET /polars/:id/export/:format` | Export as `json`, `jieter`, or `expedition` |
-| `GET/PUT /activePolar` | Read or set the active polar id |
-| `GET/PUT /performanceFactor` | Read or set the polar performance factor |
-| `GET /imports/formats` / `POST /imports/text/:format` | List/import supported text formats |
-| `GET /imports/sources` / `GET /imports/sources/:source/search` / `POST /imports/sources/:source/items/:externalId` | External sources (ORC) |
+- Keeps your polar data in one place.
+- Lets you save and name different polars.
+- Lets you choose which polar is the active one.
+- Makes it easier to import a polar from a file or an external source.
+- Helps other sailing tools use the correct polar without having to edit raw files by hand.
 
-## Known limitations
+## Why this is useful
 
-- Import/export text formats currently supported: Jieter/ORC matrix text, Expedition text.
-- Deleting the active polar is rejected; select a different active polar first.
-- Only port/starboard-symmetric canonical polars are supported (per `polar-format` v1).
+This plugin is most useful when used together with other sailing apps in Signal K. Those apps can do the actual performance calculations, routing help, or sailing analysis, but they need a good polar to work with.
