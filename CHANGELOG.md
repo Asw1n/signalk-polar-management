@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added polar validation and copy endpoints, offline-aware external import handling,
+  and a reorganized management webapp with separate active, management, and import pages.
+
+### Changed
+
+- Added optional performance-factor scaling to sampled polar curves, including beat, run,
+  and maximum-speed targets.
+
 ## 0.1.0 - Unreleased
 
 - Initial extraction from `signalk-polar-performance-plugin`: polar storage, selection, import

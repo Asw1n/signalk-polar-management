@@ -1,6 +1,7 @@
 'use strict'
 
 const path = require('path')
+const { validatePolarTable } = require('polar-format')
 const PolarStore = require('./lib/PolarStore')
 const { ImportService, ImportError } = require('./lib/import/ImportService')
 const { ExportService, ExportError } = require('./lib/export/ExportService')
@@ -33,6 +34,21 @@ module.exports = (app) => {
   function isValidPerformanceFactor(value) {
     const factor = Number(value)
     return Number.isFinite(factor) && factor >= 0 && factor <= 1
+  }
+
+  // Lightweight internet connectivity probe (mirrors signalk-polar-performance-plugin).
+  // Attempts a HEAD request to Cloudflare's public DNS (1.1.1.1) with a 3s timeout.
+  async function checkInternet() {
+    const TIMEOUT_MS = 3000
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+      const response = await fetch('https://1.1.1.1', { method: 'HEAD', signal: controller.signal })
+        .finally(() => clearTimeout(timer))
+      return response.status < 600
+    } catch (_) {
+      return false
+    }
   }
 
   function publishMetadata() {
@@ -169,8 +185,36 @@ module.exports = (app) => {
       } catch (e) {
         return res.status(404).json({ error: e.message })
       }
+      const performanceFactor = req.query.corrected === 'true' ? settings.performanceFactor : 1
       try {
-        res.json({ id: req.params.id, ...buildCurves(table, step) })
+        res.json({ id: req.params.id, ...buildCurves(table, step, performanceFactor) })
+      } catch (e) {
+        res.status(400).json({ error: e.message })
+      }
+    })
+
+    router.get('/polars/:id/validate', (req, res) => {
+      let table
+      try {
+        table = store.get(req.params.id)
+      } catch (e) {
+        return res.status(404).json({ error: e.message })
+      }
+      const result = validatePolarTable(table)
+      res.json({
+        valid: result.valid,
+        errors: result.valid ? [] : result.errors.map(e => `${e.path}: ${e.message}`)
+      })
+    })
+
+    router.post('/polars/:id/copy', (req, res) => {
+      const newId = req.body?.id
+      if (typeof newId !== 'string' || !newId.trim()) {
+        return res.status(400).json({ error: "'id' is required" })
+      }
+      try {
+        store.copy(req.params.id, newId)
+        res.json({ id: newId })
       } catch (e) {
         res.status(400).json({ error: e.message })
       }
@@ -215,8 +259,25 @@ module.exports = (app) => {
       }
     })
 
+    router.get('/internet', async (req, res) => {
+      res.json({ online: await checkInternet() })
+    })
+
     router.get('/activePolar', (req, res) => {
-      res.json({ id: settings.activePolar || null })
+      const id = settings.activePolar || null
+      if (!id) {
+        return res.json({ id: null, exists: false, valid: false, errors: [] })
+      }
+      if (!store.exists(id)) {
+        return res.json({ id, exists: false, valid: false, errors: [`Configured active polar '${id}' was not found`] })
+      }
+      const result = validatePolarTable(store.get(id))
+      res.json({
+        id,
+        exists: true,
+        valid: result.valid,
+        errors: result.valid ? [] : result.errors.map(e => `${e.path}: ${e.message}`)
+      })
     })
 
     router.put('/activePolar', (req, res) => {
@@ -266,6 +327,9 @@ module.exports = (app) => {
     })
 
     router.get('/imports/sources/:source/search', async (req, res) => {
+      if (!await checkInternet()) {
+        return res.status(503).json({ error: 'No internet connection — external source imports are unavailable' })
+      }
       try {
         res.json(await importService.searchSource(req.params.source, req.query.q))
       } catch (e) {
@@ -274,6 +338,9 @@ module.exports = (app) => {
     })
 
     router.post('/imports/sources/:source/items/:externalId', async (req, res) => {
+      if (!await checkInternet()) {
+        return res.status(503).json({ error: 'No internet connection — external source imports are unavailable' })
+      }
       try {
         res.json(await importService.importSource(req.params.source, req.params.externalId, req.body))
       } catch (e) {

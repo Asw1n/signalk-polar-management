@@ -17,6 +17,38 @@
   white-space: nowrap;
 }
 
+/* ─── Sidebar active link accent ───────────────────────────────────────────── */
+.sidebar .nav-link.active { border-left-color: #1a73e8 !important; }
+
+/* ─── Pages render their own containers; hide the shared page-shell chrome ── */
+#page-shell.page-shellless { display: contents; }
+#page-shell.page-shellless > #card-title { display: none; }
+#card-body.page-shellless-body { display: contents; padding: 0; }
+
+/* ─── Key/value metadata tables (2 columns: label, value) ─────────────────── */
+.table-kv {
+  table-layout: fixed;
+  width: 100%;
+}
+.table-kv td:first-child {
+  width: 45%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.table-kv td:last-child { width: 55%; }
+
+/* ─── Polar management row actions ─────────────────────────────────────────── */
+.polar-actions { white-space: nowrap; text-align: right; }
+
+/* ─── Hand-rolled dropdown toggle (no Bootstrap JS bundle is loaded) ───────── */
+.dropdown { position: relative; }
+.dropdown-menu { display: none; position: absolute; z-index: 1000; }
+.dropdown-menu.show { display: block; }
+
+/* ─── ORC search results spacing ───────────────────────────────────────────── */
+#orc-results { max-height: 360px; overflow-y: auto; }
+
 /* ─── Polar canvas ──────────────────────────────────────────────────────────── */
 .polar-canvas {
   display: block;
