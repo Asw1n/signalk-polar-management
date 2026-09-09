@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Reject invalid polar resource IDs before using them as storage filenames.
+
 ## 1.0.0 - 2026-09-09
 
 Initial release.
