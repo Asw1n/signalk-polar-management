@@ -2,18 +2,116 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Polar Management Plugin API",
-    "version": "0.1.0",
-    "description": "REST API for storing, importing, exporting and selecting canonical polar tables.\nAll speed values are in m/s, all angles in radians (polar-format canonical units).\nThe same 'polars' resource type is also exposed via the standard Signal K Resource Provider API at /signalk/v2/api/resources/polars/<id>."
+    "version": "1.0.0",
+    "description": "REST API for storing, importing, exporting and selecting canonical polar tables.\nAll speed values are in m/s, all angles in radians (polar-format canonical units).\nThe same 'polars' resource type is also exposed via the standard Signal K Resource Provider API at /signalk/v2/api/resources/polars/<id>; that API is preferred for consumers that only need CRUD. This document also covers plugin-owned endpoints (import, export, validation, active-polar/performance-factor selection) with no Resource Provider equivalent.\nThe /polars/{id}/curves endpoint used by this plugin's own webapp to render the selected polar is intentionally not part of this contract."
   },
   "servers": [
     { "url": "/plugins/signalk-polar-management" }
   ],
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": { "error": { "type": "string" } },
+        "required": ["error"]
+      },
+      "PolarSummary": {
+        "type": "object",
+        "description": "Light metadata for a stored polar, without axes/matrix.",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "boatType": { "type": "string" },
+          "sailnumber": { "type": "string" },
+          "year": { "type": "integer" },
+          "source": { "type": "string" },
+          "notes": { "type": "string" },
+          "hasDerived": { "type": "boolean" }
+        },
+        "required": ["id"]
+      },
+      "CanonicalPolarResource": {
+        "type": "object",
+        "description": "polar-format canonical polarTable document. See the polar-format package schema for the full contract.",
+        "properties": {
+          "kind": { "type": "string", "enum": ["polarTable"] },
+          "schemaVersion": { "type": "string" },
+          "name": { "type": "string" },
+          "boatType": { "type": "string" },
+          "sailnumber": { "type": "string" },
+          "year": { "type": "integer" },
+          "source": { "type": "string" },
+          "notes": { "type": "string" },
+          "units": { "type": "object" },
+          "symmetry": { "type": "object" },
+          "axes": { "type": "object" },
+          "values": { "type": "object" },
+          "derived": { "type": "object" }
+        },
+        "required": ["kind", "schemaVersion", "units", "symmetry", "axes", "values"]
+      },
+      "ValidationResult": {
+        "type": "object",
+        "properties": {
+          "valid": { "type": "boolean" },
+          "errors": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["valid", "errors"]
+      },
+      "ImportFormatDescriptor": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "required": ["id", "name"]
+      },
+      "ImportSourceDescriptor": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "url": { "type": "string" },
+          "cached": { "type": "boolean" }
+        },
+        "required": ["id", "name"]
+      },
+      "ImportSourceMatch": {
+        "type": "object",
+        "description": "One search result from an external import source (e.g. an ORC active certificate).",
+        "properties": {
+          "externalId": { "type": "string" },
+          "name": { "type": "string" },
+          "sailnumber": { "type": "string" },
+          "boatType": { "type": "string" },
+          "year": { "type": "integer" },
+          "source": { "type": "string" }
+        },
+        "required": ["externalId", "name"]
+      },
+      "ImportResult": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "resource": { "$ref": "#/components/schemas/CanonicalPolarResource" }
+        },
+        "required": ["id", "resource"]
+      }
+    }
+  },
   "paths": {
     "/polars": {
       "get": {
         "operationId": "listPolars",
         "summary": "List all stored polars with light metadata",
-        "responses": { "200": { "description": "Array of polar summaries" } }
+        "responses": {
+          "200": {
+            "description": "Map of polar id to summary metadata",
+            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/PolarSummary" } } } }
+          }
+        }
       }
     },
     "/polars/{id}": {
@@ -21,30 +119,59 @@
         "operationId": "getPolar",
         "summary": "Get a stored canonical polar resource",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "Canonical polar resource" }, "404": { "description": "Not found" } }
+        "responses": {
+          "200": { "description": "Canonical polar resource", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CanonicalPolarResource" } } } },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       },
       "put": {
         "operationId": "putPolar",
         "summary": "Create or replace a canonical polar resource",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "Saved" }, "400": { "description": "Validation error" } }
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CanonicalPolarResource" } } }
+        },
+        "responses": {
+          "200": { "description": "Saved", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } } },
+          "400": { "description": "Validation error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       },
       "delete": {
         "operationId": "deletePolar",
         "summary": "Delete a stored polar (not allowed while active)",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "204": { "description": "Deleted" }, "409": { "description": "Polar is active" } }
+        "responses": {
+          "204": { "description": "Deleted" },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Polar is active", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
-    "/polars/{id}/curves": {
+    "/polars/{id}/validate": {
       "get": {
-        "operationId": "getPolarCurves",
-        "summary": "Sampled render-ready TWS curves (SI units) over the full valid TWA range",
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "step", "in": "query", "required": false, "schema": { "type": "number", "default": 5 }, "description": "Angular sampling step in degrees" }
-        ],
-        "responses": { "200": { "description": "Curves per TWS" }, "400": { "description": "Invalid step or polar table" }, "404": { "description": "Not found" } }
+        "operationId": "validatePolar",
+        "summary": "Validate a stored polar against polar-format",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Validation result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ValidationResult" } } } },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/polars/{id}/copy": {
+      "post": {
+        "operationId": "copyPolar",
+        "summary": "Duplicate a stored polar under a new id",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } }
+        },
+        "responses": {
+          "200": { "description": "Copied", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } } },
+          "400": { "description": "Missing id or id already exists", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/polars/{id}/rename": {
@@ -52,7 +179,14 @@
         "operationId": "renamePolar",
         "summary": "Rename a stored polar",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "Renamed" } }
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } }
+        },
+        "responses": {
+          "200": { "description": "Renamed", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } } },
+          "400": { "description": "Missing id or id already exists", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/polars/{id}/export/{format}": {
@@ -63,46 +197,104 @@
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
           { "name": "format", "in": "path", "required": true, "schema": { "type": "string", "enum": ["json", "jieter", "expedition"] } }
         ],
-        "responses": { "200": { "description": "Exported file" } }
+        "responses": {
+          "200": { "description": "Exported file, returned as an attachment", "content": { "application/json": {}, "text/plain": {} } },
+          "400": { "description": "Unsupported format or export error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/exports/formats": {
+      "get": {
+        "operationId": "listExportFormats",
+        "summary": "List supported export formats, including canonical json",
+        "responses": {
+          "200": { "description": "Array of export format descriptors", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ImportFormatDescriptor" } } } } }
+        }
       }
     },
     "/activePolar": {
       "get": {
         "operationId": "getActivePolar",
-        "summary": "Get the currently active polar id",
-        "responses": { "200": { "description": "{ id }" } }
+        "summary": "Get the currently active polar id and its validity",
+        "responses": {
+          "200": {
+            "description": "Active polar status",
+            "content": { "application/json": { "schema": { "type": "object", "properties": {
+              "id": { "type": "string", "nullable": true },
+              "exists": { "type": "boolean" },
+              "valid": { "type": "boolean" },
+              "errors": { "type": "array", "items": { "type": "string" } }
+            }, "required": ["id", "exists", "valid", "errors"] } } }
+          }
+        }
       },
       "put": {
         "operationId": "setActivePolar",
-        "summary": "Set the active polar id; publishes vessels.self.polars.activePolar",
-        "responses": { "200": { "description": "{ id }" } }
+        "summary": "Set the active polar id; publishes vessels.self.polars.activePolar for use by other plugins",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "nullable": true } } } } }
+        },
+        "responses": {
+          "200": { "description": "Active polar set", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "nullable": true } } } } } },
+          "404": { "description": "Polar not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/performanceFactor": {
       "get": {
         "operationId": "getPerformanceFactor",
-        "summary": "Get the polar performance factor",
-        "responses": { "200": { "description": "{ value } where 1.0 means unchanged polar speed" } }
+        "summary": "Get the shared polar performance factor",
+        "responses": {
+          "200": { "description": "1.0 means unchanged polar speed", "content": { "application/json": { "schema": { "type": "object", "properties": { "value": { "type": "number", "minimum": 0, "maximum": 1 } }, "required": ["value"] } } } }
+        }
       },
       "put": {
         "operationId": "setPerformanceFactor",
-        "summary": "Set the polar performance factor; publishes vessels.self.polars.performanceFactor",
-        "responses": { "200": { "description": "{ value }" } }
+        "summary": "Set the shared polar performance factor; publishes vessels.self.polars.performanceFactor for use by other plugins",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "value": { "type": "number", "minimum": 0, "maximum": 1 } }, "required": ["value"] } } }
+        },
+        "responses": {
+          "200": { "description": "Factor set", "content": { "application/json": { "schema": { "type": "object", "properties": { "value": { "type": "number" } }, "required": ["value"] } } } },
+          "400": { "description": "Out of range", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/imports/formats": {
-      "get": { "operationId": "listImportFormats", "summary": "List supported text import formats", "responses": { "200": { "description": "OK" } } }
+      "get": {
+        "operationId": "listImportFormats",
+        "summary": "List supported text import formats",
+        "responses": {
+          "200": { "description": "Array of import format descriptors", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ImportFormatDescriptor" } } } } }
+        }
+      }
     },
     "/imports/text/{format}": {
       "post": {
         "operationId": "importText",
         "summary": "Import a polar from pasted/uploaded text in a given format",
         "parameters": [{ "name": "format", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "{ id, resource }" }, "400": { "description": "Parse or validation error" } }
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "content": { "type": "string" }, "name": { "type": "string" }, "sailnumber": { "type": "string" }, "boatType": { "type": "string" }, "year": { "type": "integer" }, "source": { "type": "string" }, "notes": { "type": "string" } }, "required": ["content"] } } }
+        },
+        "responses": {
+          "200": { "description": "Imported and stored", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ImportResult" } } } },
+          "400": { "description": "Parse or validation error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/imports/sources": {
-      "get": { "operationId": "listImportSources", "summary": "List supported external import sources (e.g. ORC)", "responses": { "200": { "description": "OK" } } }
+      "get": {
+        "operationId": "listImportSources",
+        "summary": "List supported external import sources (e.g. ORC)",
+        "responses": {
+          "200": { "description": "Array of import source descriptors", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ImportSourceDescriptor" } } } } }
+        }
+      }
     },
     "/imports/sources/{source}/search": {
       "get": {
@@ -112,7 +304,11 @@
           { "name": "source", "in": "path", "required": true, "schema": { "type": "string" } },
           { "name": "q", "in": "query", "schema": { "type": "string" } }
         ],
-        "responses": { "200": { "description": "Array of matches" } }
+        "responses": {
+          "200": { "description": "Array of matches", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ImportSourceMatch" } } } } },
+          "404": { "description": "Unsupported source", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "No internet connection or source unavailable", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/imports/sources/{source}/items/{externalId}": {
@@ -123,7 +319,20 @@
           { "name": "source", "in": "path", "required": true, "schema": { "type": "string" } },
           { "name": "externalId", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
-        "responses": { "200": { "description": "{ id, resource }" } }
+        "responses": {
+          "200": { "description": "Imported and stored", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ImportResult" } } } },
+          "404": { "description": "Unsupported source or external id not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "No internet connection or source unavailable", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/internet": {
+      "get": {
+        "operationId": "getInternetStatus",
+        "summary": "Lightweight connectivity probe used to gate external-source imports",
+        "responses": {
+          "200": { "description": "Connectivity status", "content": { "application/json": { "schema": { "type": "object", "properties": { "online": { "type": "boolean" } }, "required": ["online"] } } } }
+        }
       }
     }
   }
