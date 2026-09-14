@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Added automatic detection for canonical, Jieter, and Expedition polar imports.
+
 ### Fixed
 
 - Reject invalid polar resource IDs before using them as storage filenames.
