@@ -5,6 +5,7 @@
 ### Added
 
 - Added automatic detection for canonical, Jieter, and Expedition polar imports.
+- Added ORC RMS JSON imports using the public certificate data endpoint.
 
 ### Changed
 
