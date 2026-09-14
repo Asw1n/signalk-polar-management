@@ -6,6 +6,10 @@
 
 - Added automatic detection for canonical, Jieter, and Expedition polar imports.
 
+### Changed
+
+- Improved the polar management interface and polar diagram rendering.
+
 ### Fixed
 
 - Reject invalid polar resource IDs before using them as storage filenames.

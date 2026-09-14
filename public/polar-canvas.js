@@ -89,8 +89,9 @@
     const allCurves = Object.values(this._curves)
     if (this._liveCurve) allCurves.push(this._liveCurve)
     for (const curve of allCurves) {
+      if (!curve || !Array.isArray(curve.points)) continue
       for (const pt of curve.points) {
-        if (pt.tbs > maxMs) maxMs = pt.tbs
+        if (pt && Number.isFinite(pt.tbs) && pt.tbs > maxMs) maxMs = pt.tbs
       }
     }
     return maxMs || (10 / 1.943844)  // default ~5 m/s
@@ -253,7 +254,7 @@
       for (let i = 0; i < n; i++) {
         const tws   = this._twsList[i]
         const curve = this._curves[tws]
-        if (!curve || curve.points.length === 0) continue
+        if (!curve || !Array.isArray(curve.points) || curve.points.length === 0) continue
         const color = this._curveColor(i)
         this._drawCurve(oc, cx, cy, R, maxMs, curve, color, 1.2, 3)
         this._drawCurveLabel(oc, cx, cy, R, maxMs, curve, tws, color)
@@ -274,7 +275,8 @@
     const drawSide = (mirror) => {
       ctx.beginPath()
       let first = true
-      for (const pt of curve.points) {
+      for (const pt of curve.points || []) {
+        if (!pt || !Number.isFinite(pt.twa) || !Number.isFinite(pt.tbs)) continue
         const angleRad = mirror ? 2 * Math.PI - pt.twa : pt.twa
         const { x, y } = polarToXY(cx, cy, R, maxMs, angleRad, pt.tbs)
         if (first) { ctx.moveTo(x, y); first = false }
@@ -284,7 +286,7 @@
 
       // Beat and run markers — ring style: background fill, curve-color stroke
       for (const marker of [curve.beat, curve.run]) {
-        if (!marker) continue
+        if (!marker || !Number.isFinite(marker.twa) || !Number.isFinite(marker.tbs)) continue
         const angleRad = mirror ? 2 * Math.PI - marker.twa : marker.twa
         const { x, y } = polarToXY(cx, cy, R, maxMs, angleRad, marker.tbs)
         ctx.beginPath()
@@ -308,13 +310,13 @@
   // labelAngle is chosen as (run.twa - 10°) or (lastPoint.twa - 10°) — whichever is valid.
   // The label is drawn on the starboard side only.
   PolarCanvas.prototype._drawCurveLabel = function (ctx, cx, cy, R, maxMs, curve, twsMs, color) {
-    const points = curve.points
-    if (!points || points.length === 0) return
+    const points = (curve.points || []).filter(pt => pt && Number.isFinite(pt.twa) && Number.isFinite(pt.tbs))
+    if (points.length === 0) return
 
     const tenDeg = 10 * Math.PI / 180
 
     // Label angle: run.twa − 10° or lastPoint.twa − 10°, clamped to data range
-    const refTwa = curve.run ? curve.run.twa : points[points.length - 1].twa
+    const refTwa = (curve.run && Number.isFinite(curve.run.twa)) ? curve.run.twa : points[points.length - 1].twa
     const labelTwa = Math.max(points[0].twa, refTwa - tenDeg)
 
     // Interpolate bsp at labelTwa from the sorted points array
@@ -510,7 +512,7 @@
     const curves = {}
     const twsList = []
     for (const curve of response.curves || []) {
-      if (!curve.points || curve.points.length === 0) continue
+      if (!curve || !Array.isArray(curve.points) || curve.points.length === 0) continue
       twsList.push(curve.tws)
       curves[curve.tws] = curve
     }

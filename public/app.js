@@ -30,18 +30,20 @@ async function api(path, options) {
 let polars = []
 let activeStatus = { id: null, exists: false, valid: false, errors: [] }
 let performanceFactor = 1
-let importFormats = []
 let internetStatus = { online: false }
 let orcCached = false
 let lastFileImportError = ''
 let lastTextImportError = ''
 let lastOrcImportError = ''
-let validation = null // { id, valid, errors } — Management inspection results
+let orcQuery = ''
+let orcResults = null // null = no search run yet
 let activePage = 'active'
 let polarSort = { key: 'name', direction: 'asc' }
+let canvasObserver = null
 
 const POLAR_COLUMNS = [
-  { key: 'name', label: 'Name', value: polar => polar.name || polar.id },
+  { key: 'name', label: 'Boat name', value: polar => polar.name || polar.id },
+  { key: 'id', label: 'ID', value: polar => polar.id },
   { key: 'boatType', label: 'Boat type', value: polar => polar.boatType || '' },
   { key: 'sailnumber', label: 'Sail no.', value: polar => polar.sailnumber || '' },
   { key: 'year', label: 'Year', value: polar => polar.year || '' },
@@ -100,7 +102,6 @@ function buildPolarTable({ selectable = false, actions = false } = {}) {
                   <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/expedition" download>Expedition text</a>
                 </div>
               </div>
-              <button class="btn btn-link btn-sm" data-action="validate" data-id="${escapeHtml(polar.id)}">Validate</button>
               <button class="btn btn-link btn-sm text-danger" data-action="delete" data-id="${escapeHtml(polar.id)}">Delete</button>
             </td>
           ` : ''}
@@ -129,7 +130,6 @@ async function loadPerformanceFactor() {
   performanceFactor = Number.isFinite(value) ? value : 1
 }
 
-async function loadImportFormats() { importFormats = await api('imports/formats') }
 async function loadInternetStatus() { internetStatus = await api('internet') }
 
 async function loadOrcSourceStatus() {
@@ -141,7 +141,7 @@ async function loadOrcSourceStatus() {
 async function loadAll() {
   await Promise.all([
     loadPolars(), loadActiveStatus(), loadPerformanceFactor(),
-    loadImportFormats(), loadInternetStatus(), loadOrcSourceStatus()
+    loadInternetStatus(), loadOrcSourceStatus()
   ])
 }
 
@@ -154,6 +154,7 @@ const PAGES = {
 
 function switchPage(page) {
   activePage = page
+  if (canvasObserver) { canvasObserver.disconnect(); canvasObserver = null }
   document.querySelectorAll('#main-nav .nav-link').forEach(l =>
     l.classList.toggle('active', l.dataset.page === page)
   )
@@ -187,7 +188,8 @@ function sectionHeading(text) {
   return h
 }
 
-// Renders a 'Warnings' section heading + list, matching the Overview container.
+// Renders a 'Warnings' section heading + list. Always append this last so the
+// warnings stay the final paragraph of their container.
 // Returns an empty fragment (nothing appended) when there are no messages.
 function warningsSection(messages) {
   const frag = document.createDocumentFragment()
@@ -204,8 +206,8 @@ function warningsSection(messages) {
 function buildActivePage() {
   const wrap = document.createElement('div')
 
-  // --- Overview card ---
-  const overview = cardEl('Overview')
+  // --- Active polar card ---
+  const overview = cardEl('Active polar')
   wrap.appendChild(overview.card)
 
   const row = document.createElement('div')
@@ -228,8 +230,8 @@ function buildActivePage() {
     canvas.className = 'polar-canvas'
     colGraph.appendChild(canvas)
     const canvasInstance = new window.PolarCanvas(canvas)
-    // Load curves after the element is attached and sized.
-    setTimeout(() => loadOverviewCurves(activeStatus.id, canvasInstance), 0)
+    observeCanvasSize(canvas, canvasInstance)
+    loadOverviewCurves(activeStatus.id, canvasInstance)
   } else {
     const placeholder = document.createElement('div')
     placeholder.className = 'text-muted small'
@@ -242,7 +244,8 @@ function buildActivePage() {
     const dl = document.createElement('table')
     dl.className = 'table table-kv table-sm table-borderless mb-0'
     dl.innerHTML = [
-      ['Name', activePolar.name],
+      ['Boat name', activePolar.name],
+      ['ID', activePolar.id],
       ['Boat type', activePolar.boatType],
       ['Sail no.', activePolar.sailnumber],
       ['Year', activePolar.year],
@@ -300,8 +303,8 @@ function buildActivePage() {
   }
   colDetails.appendChild(warningsSection(warnings))
 
-  // --- Active polar selection card ---
-  const selection = cardEl('Active polar')
+  // --- Polar selection card ---
+  const selection = cardEl('Select polar')
   wrap.appendChild(selection.card)
 
   if (!polars.length) {
@@ -333,10 +336,32 @@ function buildActivePage() {
 async function loadOverviewCurves(id, canvas) {
   try {
     const curves = await api(`polars/${encodeURIComponent(id)}/curves?step=5&corrected=true`)
-    canvas.resize()
     canvas.loadCurves(curves)
   } catch (e) {
     setMessage(e.message, true)
+  }
+}
+
+// Resize + redraw the canvas whenever its CSS size changes. This covers both the
+// asynchronously injected CoreUI stylesheet (which changes layout after first
+// paint) and later window resizes; without it the backing store is sized from a
+// stale CSS box and the diagram renders blurry.
+function observeCanvasSize(el, instance) {
+  if (canvasObserver) canvasObserver.disconnect()
+  const applySize = () => {
+    if (el.offsetWidth > 0) instance.resize()
+  }
+  if (window.ResizeObserver) {
+    let rafPending = false
+    canvasObserver = new ResizeObserver(() => {
+      if (rafPending) return
+      rafPending = true
+      requestAnimationFrame(() => { rafPending = false; applySize() })
+    })
+    canvasObserver.observe(el)
+  } else {
+    canvasObserver = null
+    requestAnimationFrame(applySize)
   }
 }
 
@@ -371,38 +396,11 @@ function buildManagementPage() {
       if (action === 'rename') await renamePolar(id)
       if (action === 'copy') await copyPolar(id)
       if (action === 'delete') await deletePolar(id)
-      if (action === 'validate') await validatePolar(id)
       await rerender()
     } catch (e) {
       setMessage(e.message, true)
     }
   })
-
-  // --- Validation results card ---
-  const results = cardEl('Validation results')
-  wrap.appendChild(results.card)
-  if (!validation) {
-    const empty = document.createElement('div')
-    empty.className = 'text-muted small'
-    empty.textContent = 'Click Validate on a stored polar to inspect it.'
-    results.body.appendChild(empty)
-  } else {
-    const heading = document.createElement('div')
-    heading.className = 'fw-semibold mb-2'
-    heading.textContent = validation.id
-    results.body.appendChild(heading)
-    if (validation.valid) {
-      const ok = document.createElement('div')
-      ok.className = 'text-success small'
-      ok.textContent = 'No issues found.'
-      results.body.appendChild(ok)
-    } else {
-      const ul = document.createElement('ul')
-      ul.className = 'text-danger small mb-0 ps-3'
-      ul.innerHTML = validation.errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')
-      results.body.appendChild(ul)
-    }
-  }
 
   return wrap
 }
@@ -433,13 +431,7 @@ async function deletePolar(id) {
   await api(`polars/${encodeURIComponent(id)}`, { method: 'DELETE' })
   await loadPolars()
   await loadActiveStatus()
-  if (validation && validation.id === id) validation = null
   setMessage(`Deleted '${id}'`)
-}
-
-async function validatePolar(id) {
-  const result = await api(`polars/${encodeURIComponent(id)}/validate`)
-  validation = { id, ...result }
 }
 
 // ── Import page ────────────────────────────────────────────────────────────────
@@ -452,97 +444,82 @@ function readFileAsText(file) {
   })
 }
 
+// The server auto-detects the format, so no format picker is offered.
+async function importPolarText(content) {
+  const { id } = await api('imports/text/auto', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content })
+  })
+  return id
+}
+
 function buildImportPage() {
   const wrap = document.createElement('div')
-  const formatOptions = importFormats.map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)}</option>`).join('')
 
   // --- Import from file ---
   const fileCard = cardEl('Import from file')
   wrap.appendChild(fileCard.card)
-  fileCard.body.appendChild(warningsSection(lastFileImportError ? [lastFileImportError] : []))
   const fileFormWrap = document.createElement('div')
   fileFormWrap.innerHTML = `
     <div class="form-group mb-2">
-      <label>Format</label>
-      <select id="fileImportFormat" class="form-select form-select-sm">${formatOptions}</select>
-    </div>
-    <div class="form-group mb-2">
       <label>File</label>
       <input type="file" id="fileImportFile" class="form-control form-control-sm">
+      <div class="form-text small text-muted">Canonical JSON, Jieter or Expedition — the format is detected automatically.</div>
     </div>
   `
   fileCard.body.appendChild(fileFormWrap)
   const fileImportBtn = document.createElement('button')
   fileImportBtn.className = 'btn btn-primary btn-sm'
   fileImportBtn.textContent = 'Import'
-  fileImportBtn.disabled = !importFormats.length
   fileImportBtn.addEventListener('click', async () => {
-    const format = fileFormWrap.querySelector('#fileImportFormat').value
     const file = fileFormWrap.querySelector('#fileImportFile').files[0]
     if (!file) { lastFileImportError = 'Choose a file to import'; await rerender(); return }
     try {
-      const content = await readFileAsText(file)
-      const { id } = await api(`imports/text/${encodeURIComponent(format)}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content })
-      })
+      const id = await importPolarText(await readFileAsText(file))
       lastFileImportError = ''
       await loadPolars()
       setMessage(`Imported as '${id}'`)
-      await rerender()
     } catch (e) {
       lastFileImportError = e.message
-      await rerender()
     }
+    await rerender()
   })
   fileCard.body.appendChild(fileImportBtn)
+  fileCard.body.appendChild(warningsSection(lastFileImportError ? [lastFileImportError] : []))
 
   // --- Import from text ---
   const textCard = cardEl('Import from text')
   wrap.appendChild(textCard.card)
-  textCard.body.appendChild(warningsSection(lastTextImportError ? [lastTextImportError] : []))
   const textFormWrap = document.createElement('div')
   textFormWrap.innerHTML = `
     <div class="form-group mb-2">
-      <label>Format</label>
-      <select id="textImportFormat" class="form-select form-select-sm">${formatOptions}</select>
-    </div>
-    <div class="form-group mb-2">
       <label>Text</label>
       <textarea id="textImportText" class="form-control form-control-sm" rows="6"></textarea>
+      <div class="form-text small text-muted">Canonical JSON, Jieter or Expedition — the format is detected automatically.</div>
     </div>
   `
   textCard.body.appendChild(textFormWrap)
   const textImportBtn = document.createElement('button')
   textImportBtn.className = 'btn btn-primary btn-sm'
   textImportBtn.textContent = 'Import'
-  textImportBtn.disabled = !importFormats.length
   textImportBtn.addEventListener('click', async () => {
-    const format = textFormWrap.querySelector('#textImportFormat').value
     const content = textFormWrap.querySelector('#textImportText').value
     if (!content || !content.trim()) { lastTextImportError = 'Paste polar text first'; await rerender(); return }
     try {
-      const { id } = await api(`imports/text/${encodeURIComponent(format)}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content })
-      })
+      const id = await importPolarText(content)
       lastTextImportError = ''
       await loadPolars()
       setMessage(`Imported as '${id}'`)
-      await rerender()
     } catch (e) {
       lastTextImportError = e.message
-      await rerender()
     }
+    await rerender()
   })
   textCard.body.appendChild(textImportBtn)
+  textCard.body.appendChild(warningsSection(lastTextImportError ? [lastTextImportError] : []))
 
   // --- Import from ORC ---
   const orcCard = cardEl('Import from ORC')
   wrap.appendChild(orcCard.card)
-  const orcWarnings = []
-  if (!internetStatus.online) orcWarnings.push('No internet connection — ORC import is unavailable.')
-  else if (!orcCached) orcWarnings.push('No current cache — the first search may be slow.')
-  if (lastOrcImportError) orcWarnings.push(lastOrcImportError)
-  orcCard.body.appendChild(warningsSection(orcWarnings))
 
   const searchRow = document.createElement('div')
   searchRow.className = 'input-group mb-2'
@@ -551,43 +528,65 @@ function buildImportPage() {
     <input type="text" id="orcQuery" class="form-control form-control-sm" placeholder="Sail number, yacht name...">
     <button id="orcSearchBtn" class="btn btn-secondary btn-sm">Search</button>
   `
-  searchRow.querySelector('#orcQuery').disabled = !internetStatus.online
-  searchRow.querySelector('#orcSearchBtn').disabled = !internetStatus.online
+  const queryEl = searchRow.querySelector('#orcQuery')
+  const searchBtn = searchRow.querySelector('#orcSearchBtn')
+  queryEl.value = orcQuery
+  queryEl.disabled = !internetStatus.online
+  searchBtn.disabled = !internetStatus.online
   orcCard.body.appendChild(searchRow)
 
   const orcResultsEl = document.createElement('div')
   orcResultsEl.id = 'orc-results'
   orcCard.body.appendChild(orcResultsEl)
 
-  async function runOrcSearch() {
-    const q = searchRow.querySelector('#orcQuery').value
-    try {
-      const results = await api(`imports/sources/orc/search?q=${encodeURIComponent(q)}`)
-      orcResultsEl.innerHTML = `
-        <table class="table table-sm mb-0">
-          <tbody>
-            ${results.map(r => `
-              <tr>
-                <td>${escapeHtml(r.name)}</td>
-                <td class="text-muted">${escapeHtml(r.sailnumber || '')}</td>
-                <td class="text-muted">${escapeHtml(r.boatType || '')}</td>
-                <td class="text-muted">${escapeHtml(r.year || '')}</td>
-                <td><button class="btn btn-link btn-sm" data-action="orc-import" data-external-id="${escapeHtml(r.externalId)}">Import</button></td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `
-      lastOrcImportError = ''
-    } catch (e) {
-      lastOrcImportError = e.message
-      await rerender()
+  function renderOrcResults() {
+    if (orcResults === null) { orcResultsEl.innerHTML = ''; return }
+    if (!orcResults.length) {
+      orcResultsEl.innerHTML = '<div class="text-muted small">No matching certificates.</div>'
+      return
     }
+    orcResultsEl.innerHTML = `
+      <table class="table table-sm mb-0">
+        <tbody>
+          ${orcResults.map(r => `
+            <tr>
+              <td>${escapeHtml(r.name)}</td>
+              <td class="text-muted">${escapeHtml(r.sailnumber || '')}</td>
+              <td class="text-muted">${escapeHtml(r.boatType || '')}</td>
+              <td class="text-muted">${escapeHtml(r.year || '')}</td>
+              <td><button class="btn btn-link btn-sm" data-action="orc-import" data-external-id="${escapeHtml(r.externalId)}">Import</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `
+  }
+  renderOrcResults()
+
+  async function runOrcSearch() {
+    orcQuery = queryEl.value
+    try {
+      orcResults = await api(`imports/sources/orc/search?q=${encodeURIComponent(orcQuery)}`)
+      lastOrcImportError = ''
+      // A successful search means the certificate cache is now populated.
+      await loadOrcSourceStatus()
+    } catch (e) {
+      orcResults = null
+      lastOrcImportError = e.message
+    }
+    await rerender()
   }
 
-  searchRow.querySelector('#orcSearchBtn').addEventListener('click', () => runOrcSearch())
-  searchRow.querySelector('#orcQuery').addEventListener('keydown', (event) => {
+  searchBtn.addEventListener('click', () => runOrcSearch())
+  queryEl.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') { event.preventDefault(); runOrcSearch() }
+  })
+  // Editing the query invalidates the displayed results, but keeps them until then.
+  queryEl.addEventListener('input', () => {
+    orcQuery = queryEl.value
+    if (orcResults === null) return
+    orcResults = null
+    renderOrcResults()
   })
 
   orcResultsEl.addEventListener('click', async (event) => {
@@ -598,12 +597,17 @@ function buildImportPage() {
       lastOrcImportError = ''
       await loadPolars()
       setMessage(`Imported as '${id}' from ORC`)
-      await rerender()
     } catch (e) {
       lastOrcImportError = e.message
-      await rerender()
     }
+    await rerender()
   })
+
+  const orcWarnings = []
+  if (!internetStatus.online) orcWarnings.push('No internet connection — ORC import is unavailable.')
+  else if (!orcCached) orcWarnings.push('No current cache — the first search may be slow.')
+  if (lastOrcImportError) orcWarnings.push(lastOrcImportError)
+  orcCard.body.appendChild(warningsSection(orcWarnings))
 
   return wrap
 }
