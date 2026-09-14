@@ -12,6 +12,7 @@
 - Prevent external ORC requests from hanging indefinitely during certificate imports
   and active-certificate cache refreshes.
 - Preserve usable sparse downwind polar curves when target markers are unavailable.
+- Omit the stored polar id from resource responses and stored document bodies.
 
 ## 1.0.0 - 2026-09-09
 

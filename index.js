@@ -171,7 +171,7 @@ module.exports = (app) => {
 
     router.get('/polars/:id', (req, res) => {
       try {
-        res.json({ id: req.params.id, ...store.get(req.params.id) })
+        res.json(store.get(req.params.id))
       } catch (e) {
         res.status(404).json({ error: e.message })
       }
