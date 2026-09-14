@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "polar-format": "^1.0.0",
-    "polar-math": "^1.0.0"
+    "polar-math": "^1.1.0"
   },
   "author": "Aswin Bouwmeester <aswin.bouwmeester@gmail.com>",
   "license": "Apache-2.0",

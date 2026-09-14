@@ -11,6 +11,7 @@
 - Reject invalid polar resource IDs before using them as storage filenames.
 - Prevent external ORC requests from hanging indefinitely during certificate imports
   and active-certificate cache refreshes.
+- Preserve usable sparse downwind polar curves when target markers are unavailable.
 
 ## 1.0.0 - 2026-09-09
 
