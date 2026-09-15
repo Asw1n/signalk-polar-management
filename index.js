@@ -60,7 +60,9 @@ module.exports = (app) => {
             value: {
               type: 'object',
               displayName: 'Active polar',
-              description: 'Pointer to the selected polar resource.'
+              description: 'Pointer to the selected polar resource.',
+              // Only emitted on change, not periodically -> exempt from stale-data timeout.
+              updateContract: 'event'
             }
           },
           {
