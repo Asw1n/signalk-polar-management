@@ -19,6 +19,7 @@
 - Allow additional time for ORC active-certificate cache refreshes to complete.
 - Preserve usable sparse downwind polar curves when target markers are unavailable.
 - Exempt `polars.activePolar` from Signal K's stale-data timeout by declaring it as an event-driven path.
+- Exempt `polars.performanceFactor` from Signal K's stale-data timeout by declaring it as an event-driven path.
 - Omit the stored polar id from resource responses and stored document bodies.
 
 ## 1.0.0 - 2026-09-09

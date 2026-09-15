@@ -71,7 +71,9 @@ module.exports = (app) => {
               type: 'number',
               units: 'ratio',
               displayName: 'Polar performance factor',
-              description: 'Multiplier applied by polar consumers to reduce polar speed values.'
+              description: 'Multiplier applied by polar consumers to reduce polar speed values.',
+              // Only emitted on change, not periodically -> exempt from stale-data timeout.
+              updateContract: 'event'
             }
           }
         ]
