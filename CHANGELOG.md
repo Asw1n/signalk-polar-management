@@ -5,6 +5,7 @@
 ### Added
 
 - Added a link to the ORC terms of use in the ORC import view.
+- Added a confirmation dialog after a polar is imported successfully.
 
 ## 1.1.0 - 2026-09-15
 

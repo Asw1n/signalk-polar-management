@@ -18,6 +18,53 @@ function setMessage(text, isError) {
   if (text) setTimeout(() => { el.textContent = '' }, 4000)
 }
 
+function showImportSuccessDialog(id) {
+  const backdrop = document.createElement('div')
+  backdrop.className = 'modal-backdrop fade show'
+
+  const modal = document.createElement('div')
+  modal.className = 'modal fade show'
+  modal.setAttribute('role', 'dialog')
+  modal.setAttribute('aria-modal', 'true')
+  modal.setAttribute('aria-labelledby', 'importSuccessTitle')
+  modal.tabIndex = -1
+  modal.style.display = 'block'
+  modal.innerHTML = `
+    <div class="modal-dialog modal-dialog-centered" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="importSuccessTitle">Import successful</h5>
+        </div>
+        <div class="modal-body">
+          <p class="mb-0">The polar <strong>${escapeHtml(id)}</strong> was imported successfully.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary btn-sm" data-action="close-import-success">Close</button>
+        </div>
+      </div>
+    </div>
+  `
+
+  const close = () => {
+    document.body.classList.remove('modal-open')
+    modal.remove()
+    backdrop.remove()
+    document.removeEventListener('keydown', onKeyDown)
+  }
+  const onKeyDown = event => {
+    if (event.key === 'Escape') close()
+  }
+
+  modal.addEventListener('click', event => {
+    if (event.target === modal || event.target.closest('[data-action="close-import-success"]')) close()
+  })
+  backdrop.addEventListener('click', close)
+  document.addEventListener('keydown', onKeyDown)
+  document.body.classList.add('modal-open')
+  document.body.append(backdrop, modal)
+  modal.querySelector('[data-action="close-import-success"]').focus()
+}
+
 async function api(path, options) {
   const res = await fetch(`${BASE}/${path}`, options)
   const contentType = res.headers.get('content-type') || ''
@@ -478,6 +525,9 @@ function buildImportPage() {
       lastFileImportError = ''
       await loadPolars()
       setMessage(`Imported as '${id}'`)
+      await rerender()
+      showImportSuccessDialog(id)
+      return
     } catch (e) {
       lastFileImportError = e.message
     }
@@ -509,6 +559,9 @@ function buildImportPage() {
       lastTextImportError = ''
       await loadPolars()
       setMessage(`Imported as '${id}'`)
+      await rerender()
+      showImportSuccessDialog(id)
+      return
     } catch (e) {
       lastTextImportError = e.message
     }
@@ -602,6 +655,9 @@ function buildImportPage() {
       lastOrcImportError = ''
       await loadPolars()
       setMessage(`Imported as '${id}' from ORC`)
+      await rerender()
+      showImportSuccessDialog(id)
+      return
     } catch (e) {
       lastOrcImportError = e.message
     }
