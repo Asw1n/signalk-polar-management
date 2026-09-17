@@ -521,6 +521,11 @@ function buildImportPage() {
   const orcCard = cardEl('Import from ORC')
   wrap.appendChild(orcCard.card)
 
+  const orcTermsLink = document.createElement('p')
+  orcTermsLink.className = 'mb-2'
+  orcTermsLink.innerHTML = '<a href="https://orc.org/offshore-racing-congress---website-terms-of-use" target="_blank" rel="noopener noreferrer">ORC terms of use</a>'
+  orcCard.body.appendChild(orcTermsLink)
+
   const searchRow = document.createElement('div')
   searchRow.className = 'input-group mb-2'
   searchRow.style.maxWidth = '28rem'

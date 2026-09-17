@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added a link to the ORC terms of use in the ORC import view.
+
 ## 1.1.0 - 2026-09-15
 
 ### Added
