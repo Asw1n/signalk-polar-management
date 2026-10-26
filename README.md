@@ -28,6 +28,10 @@ Once the plugin is installed, the next step is to load a polar for your boat.
 
 This is the easiest way to get a suitable polar for your boat before using other sailing apps that depend on it.
 
+### ORC data source
+
+The ORC importer currently uses the legacy `WPub.dll` service. ORC says it will stop serving requests on **31 January 2027**, so the importer will need to move to the ORC API before then. See the [ORC API migration notes](./docs/orc-api.md) for the affected requests and documentation link.
+
 ## What this plugin does
 
 - Keeps your polar data in one place.
