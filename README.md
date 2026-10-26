@@ -42,9 +42,33 @@ The ORC importer currently uses the legacy `WPub.dll` service. ORC says it will 
 
 - Keeps your polar data in one place.
 - Lets you save and name different polars.
+- Lets you edit stored polars' boat details without changing their speed data.
 - Lets you choose which polar is the active one.
 - Makes it easier to import a polar from a file or an external source.
 - Helps other sailing tools use the correct polar without having to edit raw files by hand.
+
+## Modify a stored polar
+
+Editing requires Signal K administrator access.
+
+1. Open **Polar management**.
+2. Choose **Modify** beside a polar in the **Stored polars** table.
+3. Edit the boat name, ID, boat type, sail number, or year.
+4. Choose **Save** to apply the changes, or **Cancel** to return to the table
+   without saving.
+
+Boat name, boat type, sail number, and year are optional; leaving them blank clears
+their stored values. If supplied, the year must be a whole number. Validation
+errors appear in the form so you can correct them without losing your edits.
+
+Changing the ID replaces the former Rename action. The new ID must be unique.
+If you modify the active polar's ID, its active selection follows the new ID.
+Polar speed data, source, and notes are preserved.
+
+Administrators can make the same changes with `PUT /plugins/signalk-polar-management/polars/{id}/metadata`.
+The JSON body requires `id` and optionally accepts `name`, `boatType`, `sailnumber`,
+and integer `year`. Omitted fields are unchanged; empty strings clear text fields,
+and `null` clears the year. The existing rename API remains available for compatibility.
 
 ## Why this is useful
 

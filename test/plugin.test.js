@@ -99,6 +99,7 @@ describe('plugin lifecycle', () => {
           'POST /polars/:id/copy': 'admin',
           'PUT /polars/:id': 'admin',
           'DELETE /polars/:id': 'admin',
+          'PUT /polars/:id/metadata': 'admin',
           'POST /polars/:id/rename': 'admin',
           'GET /internet': 'readonly',
           'GET /activePolar': 'readonly',
@@ -208,5 +209,125 @@ describe('plugin lifecycle', () => {
     assert.equal(statusCode, 400)
     assert.equal(responseBody.error, 'Performance factor must be between 0 and 1')
     plugin.stop()
+  })
+
+  describe('metadata endpoint', () => {
+    let app
+    let plugin
+    let routes
+    let provider
+    let original
+
+    beforeEach(() => {
+      app = createFakeApp(dataDir)
+      plugin = createTestPlugin(app)
+      plugin.start({})
+      provider = app._registeredProviders[0].methods
+      original = {
+        kind: 'polarTable', schemaVersion: '1.0.0', name: 'Original boat',
+        units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+        symmetry: { portStarboardSymmetric: true },
+        axes: { tws: [5], twa: [0, Math.PI] },
+        values: { boatSpeedMatrix: [[1, 2]] },
+        source: 'ORC', notes: 'Keep notes'
+      }
+      routes = {}
+      plugin.registerWithRouter({
+        get: (route, handler) => { routes[`GET ${route}`] = handler },
+        put: (route, handler) => { routes[`PUT ${route}`] = handler },
+        post: () => {},
+        delete: () => {}
+      })
+    })
+
+    afterEach(() => plugin.stop())
+
+    function request(route, req) {
+      let status = 200
+      let body
+      const res = {
+        status: code => { status = code; return res },
+        json: value => { body = value }
+      }
+      routes[route](req, res)
+      return { status, body }
+    }
+
+    it('modifies metadata visible through both plugin and resource provider APIs', async () => {
+      await provider.setResource('original', original)
+      const result = request('PUT /polars/:id/metadata', {
+        params: { id: 'original' },
+        body: { id: 'new-id', name: 'New boat', boatType: 'Racer', sailnumber: 'GB 123', year: 2026 }
+      })
+      assert.deepEqual(result, { status: 200, body: { id: 'new-id' } })
+      assert.deepEqual(await provider.getResource('new-id'), {
+        ...original, name: 'New boat', boatType: 'Racer', sailnumber: 'GB 123', year: 2026
+      })
+      assert.equal(request('GET /polars', {}).body[0].id, 'new-id')
+      await assert.rejects(provider.getResource('original'), /not found/)
+      assert.equal(app._savedOptions.length, 0)
+    })
+
+    it('persists and publishes the new id when modifying the active polar', async () => {
+      await provider.setResource('original', original)
+      request('PUT /activePolar', { body: { id: 'original' } })
+      const result = request('PUT /polars/:id/metadata', {
+        params: { id: 'original' }, body: { id: 'new-id', name: 'New boat' }
+      })
+      assert.equal(result.status, 200)
+      assert.equal(app._savedOptions.at(-1).activePolar, 'new-id')
+      assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
+        { path: 'polars.activePolar', value: { href: '/resources/polars/new-id' } }
+      ])
+      const active = request('GET /activePolar', {}).body
+      assert.equal(active.id, 'new-id')
+      assert.equal(active.valid, true)
+      const restartedApp = createFakeApp(dataDir)
+      const restarted = createTestPlugin(restartedApp)
+      restarted.start(app._savedOptions.at(-1))
+      assert.ok(restartedApp._messages.some(message =>
+        message.delta.updates[0].values?.some(value => value.value?.href === '/resources/polars/new-id')
+      ))
+      restarted.stop()
+    })
+
+    it('leaves the active selection untouched for a same-id metadata edit', async () => {
+      await provider.setResource('original', original)
+      request('PUT /activePolar', { body: { id: 'original' } })
+      const count = app._messages.length
+      request('PUT /polars/:id/metadata', {
+        params: { id: 'original' }, body: { id: 'original', year: 2026 }
+      })
+      assert.equal(request('GET /activePolar', {}).body.id, 'original')
+      assert.equal(app._messages.length, count)
+      assert.equal((await provider.getResource('original')).year, 2026)
+    })
+
+    it('rejects missing polars and invalid metadata', async () => {
+      await provider.setResource('original', original)
+      assert.equal(request('PUT /polars/:id/metadata', {
+        params: { id: 'missing' }, body: { id: 'new-id' }
+      }).status, 404)
+      assert.equal(request('PUT /polars/:id/metadata', {
+        params: { id: 'original' }, body: { id: 'new-id', year: 1.5 }
+      }).status, 400)
+      assert.deepEqual(await provider.getResource('original'), original)
+    })
+
+    it('restores the original polar and selection if saving options fails', async () => {
+      await provider.setResource('original', original)
+      request('PUT /activePolar', { body: { id: 'original' } })
+      const count = app._messages.length
+      app.savePluginOptions = (options, callback) => callback(new Error('Disk full'))
+      const result = request('PUT /polars/:id/metadata', {
+        params: { id: 'original' }, body: { id: 'new-id', name: 'New boat' }
+      })
+      assert.equal(result.status, 500)
+      assert.match(result.body.error, /Disk full/)
+      assert.deepEqual(await provider.getResource('original'), original)
+      await assert.rejects(provider.getResource('new-id'), /not found/)
+      assert.equal(request('GET /activePolar', {}).body.id, 'original')
+      assert.equal(app._messages.length, count)
+    })
   })
 })

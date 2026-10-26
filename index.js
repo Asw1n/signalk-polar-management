@@ -245,6 +245,42 @@ module.exports = (app) => {
       }
     })
 
+    router.put('/polars/:id/metadata', (req, res) => {
+      const oldId = req.params.id
+      if (!store.exists(oldId)) {
+        return res.status(404).json({ error: `Polar not found: ${oldId}` })
+      }
+      let original
+      let newId
+      try {
+        original = store.get(oldId)
+        newId = store.modify(oldId, req.body)
+      } catch (e) {
+        return res.status(400).json({ error: e.message })
+      }
+      if (settings.activePolar !== oldId || newId === oldId) {
+        return res.json({ id: newId })
+      }
+      const nextSettings = { ...settings, activePolar: newId }
+      app.savePluginOptions(nextSettings, (err) => {
+        if (err) {
+          try {
+            store.save(newId, original)
+            store.rename(newId, oldId)
+          } catch (rollbackError) {
+            app.setPluginError(`Could not restore polar '${oldId}': ${rollbackError.message}`)
+            return res.status(500).json({
+              error: `Could not save active polar selection: ${err.message}. Could not restore polar: ${rollbackError.message}`
+            })
+          }
+          return res.status(500).json({ error: `Could not save active polar selection: ${err.message}` })
+        }
+        settings.activePolar = newId
+        publishActivePolar(newId)
+        res.json({ id: newId })
+      })
+    })
+
     router.post('/polars/:id/rename', (req, res) => {
       const newId = req.body?.id
       if (typeof newId !== 'string' || !newId.trim()) {

@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+### Added
+- Edit a stored polar's boat name, ID, boat type, sail number, and year from the stored polars table using a matching form with Save and Cancel. Optional boat details can be cleared without changing speed data, source, or notes.
+
 ### Changed
+- Modify replaces Rename in the stored polars table. Change the ID in the Modify form to rename a polar; an active polar stays selected under its new ID.
 - Read-only Signal K users can now view stored polar data, curves and validation, active selection and performance factor, exports, and the import/export catalogs. Polar selection, imports, external searches, and other management operations remain administrator-only.
 - Requires signalk-server >=2.31.0 for native plugin route access policies; support for Signal K 2.28–2.30 is dropped.
 

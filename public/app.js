@@ -139,7 +139,7 @@ function buildPolarTable({ selectable = false, actions = false } = {}) {
           ${POLAR_COLUMNS.map(column => `<td>${escapeHtml(column.value(polar))}</td>`).join('')}
           ${actions ? `
             <td class="polar-actions">
-              <button class="btn btn-link btn-sm" data-action="rename" data-id="${escapeHtml(polar.id)}">Rename</button>
+              <button class="btn btn-link btn-sm" data-action="modify" data-id="${escapeHtml(polar.id)}">Modify</button>
               <button class="btn btn-link btn-sm" data-action="copy" data-id="${escapeHtml(polar.id)}">Copy</button>
               <div class="dropdown d-inline">
                 <button class="btn btn-link btn-sm dropdown-toggle" type="button" data-dropdown-toggle>Export</button>
@@ -440,7 +440,10 @@ function buildManagementPage() {
     if (!target) return
     const { action, id } = target.dataset
     try {
-      if (action === 'rename') await renamePolar(id)
+      if (action === 'modify') {
+        showModifyPolar(polarById(id))
+        return
+      }
       if (action === 'copy') await copyPolar(id)
       if (action === 'delete') await deletePolar(id)
       await rerender()
@@ -452,15 +455,58 @@ function buildManagementPage() {
   return wrap
 }
 
-async function renamePolar(id) {
-  const newId = window.prompt('New name for polar', id)
-  if (!newId || newId === id) return
-  await api(`polars/${encodeURIComponent(id)}/rename`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: newId })
+function showModifyPolar(polar) {
+  const editor = cardEl('Modify polar')
+  const form = document.createElement('form')
+  form.innerHTML = `
+    <fieldset>
+      <div class="row">
+        ${POLAR_COLUMNS.filter(column => column.key !== 'source').map(column => `
+          <div class="col-md-6 mb-3">
+            <label class="small" for="modify-${column.key}">${column.label}</label>
+            <input class="form-control form-control-sm" id="modify-${column.key}" name="${column.key}"
+              type="${column.key === 'year' ? 'number' : 'text'}"
+              ${column.key === 'year' ? 'step="1"' : ''}
+              ${column.key === 'id' ? 'required maxlength="100"' : ''}
+              value="${escapeHtml(polar[column.key] ?? '')}">
+          </div>
+        `).join('')}
+      </div>
+      <div class="alert alert-danger small" role="alert" hidden></div>
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <button type="button" class="btn btn-secondary btn-sm ms-2" data-action="cancel">Cancel</button>
+    </fieldset>
+  `
+  form.querySelector('[data-action="cancel"]').addEventListener('click', () => rerender())
+  form.addEventListener('submit', async event => {
+    event.preventDefault()
+    if (!form.reportValidity()) return
+    const fieldset = form.querySelector('fieldset')
+    const error = form.querySelector('[role="alert"]')
+    const data = new FormData(form)
+    const metadata = Object.fromEntries(data)
+    metadata.year = metadata.year === '' ? null : Number(metadata.year)
+    error.hidden = true
+    fieldset.disabled = true
+    try {
+      const { id } = await api(`polars/${encodeURIComponent(polar.id)}/metadata`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(metadata)
+      })
+      await Promise.all([loadPolars(), loadActiveStatus()])
+      setMessage(`Saved '${id}'`)
+      if (activePage === 'management') await rerender()
+    } catch (e) {
+      error.textContent = e.message
+      error.hidden = false
+      setMessage(e.message, true)
+    } finally {
+      fieldset.disabled = false
+    }
   })
-  await loadPolars()
-  await loadActiveStatus()
-  setMessage(`Renamed to '${newId}'`)
+  editor.body.appendChild(form)
+  const body = document.getElementById('card-body')
+  body.replaceChildren(editor.card)
+  form.querySelector('input').focus()
 }
 
 async function copyPolar(id) {

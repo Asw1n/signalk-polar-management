@@ -175,6 +175,39 @@
         }
       }
     },
+    "/polars/{id}/metadata": {
+      "put": {
+        "operationId": "modifyPolarMetadata",
+        "summary": "Modify boat metadata and optionally change the polar id",
+        "description": "Preserves polar speed data, source and notes. Omitted fields are unchanged; empty strings clear optional text fields and null clears year. Changing an active polar's id also persists and publishes its new active selection.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id"],
+                "properties": {
+                  "id": { "type": "string", "minLength": 1, "maxLength": 100 },
+                  "name": { "type": "string" },
+                  "boatType": { "type": "string" },
+                  "sailnumber": { "type": "string" },
+                  "year": { "type": "integer", "nullable": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Saved", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } } },
+          "400": { "description": "Invalid metadata or id already exists", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Polar not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "Active selection could not be persisted; changes are rolled back unless the error reports a restore failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/polars/{id}/rename": {
       "post": {
         "operationId": "renamePolar",
