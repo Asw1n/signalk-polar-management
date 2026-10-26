@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 - 2026-10-26
 
 ### Added
 - Edit a stored polar's boat name, ID, boat type, sail number, and year from the stored polars table using a matching form with Save and Cancel. Optional boat details can be cleared without changing speed data, source, or notes.

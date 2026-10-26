@@ -1,6 +1,6 @@
 {
   "name": "signalk-polar-management",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Stores, imports, exports and selects polar tables as a Signal K resource provider.",
   "keywords": [
     "signalk-node-server-plugin",
