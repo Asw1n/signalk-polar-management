@@ -6,6 +6,12 @@ If you are not sure what a polar is, think of it as the speed your boat should m
 
 This plugin makes it easy to store more than one polar, pick the one you want to use, and manage it from a simple interface.
 
+Requires Signal K Server >=2.31.0.
+
+## HTTP endpoint access
+
+Signal K read-only users can view stored polar data, curves and validation, the current active selection and performance factor, export downloads, connectivity status, and import/export catalogs. External-source searches and all changes—including imports, selection changes, and other management operations—require administrator access. The standard Signal K Resource Provider API remains governed by the server's own authorization rules. Anonymous access is controlled by the server's security configuration and is not enabled by this plugin.
+
 ## Install from the Signal K AppStore
 
 1. Open your Signal K admin UI.

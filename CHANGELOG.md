@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Read-only Signal K users can now view stored polar data, curves and validation, active selection and performance factor, exports, and the import/export catalogs. Polar selection, imports, external searches, and other management operations remain administrator-only.
+- Requires signalk-server >=2.31.0 for native plugin route access policies; support for Signal K 2.28–2.30 is dropped.
+
 ## 1.2.0 - 2026-09-17
 
 ### Added

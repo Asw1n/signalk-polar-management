@@ -3,7 +3,8 @@
   "info": {
     "title": "Polar Management Plugin API",
     "version": "1.0.0",
-    "description": "REST API for storing, importing, exporting and selecting canonical polar tables.\nAll speed values are in m/s, all angles in radians (polar-format canonical units).\nThe same 'polars' resource type is also exposed via the standard Signal K Resource Provider API at /signalk/v2/api/resources/polars/<id>; that API is preferred for consumers that only need CRUD. This document also covers plugin-owned endpoints (import, export, validation, active-polar/performance-factor selection) with no Resource Provider equivalent.\nThe /polars/{id}/curves endpoint used by this plugin's own webapp to render the selected polar is intentionally not part of this contract."
+    "description": "REST API for storing, importing, exporting and selecting canonical polar tables.\nAll speed values are in m/s, all angles in radians (polar-format canonical units).\nThe same 'polars' resource type is also exposed via the standard Signal K Resource Provider API at /signalk/v2/api/resources/polars/<id>; that API is preferred for consumers that only need CRUD. This document also covers plugin-owned endpoints (import, export, validation, active-polar/performance-factor selection) with no Resource Provider equivalent.\nThe /polars/{id}/curves endpoint used by this plugin's own webapp to render the selected polar is intentionally not part of this contract.",
+    "x-route-access": "Signal K read-only users can access GET /polars, /polars/{id}, /polars/{id}/curves, /polars/{id}/validate, /internet, /activePolar, /performanceFactor, /imports/formats, /imports/sources, /exports/formats, /polars/{id}/export/{format}. External-source searches and all mutation routes require administrator access. Anonymous access follows the server's security configuration."
   },
   "servers": [
     { "url": "/plugins/signalk-polar-management" }

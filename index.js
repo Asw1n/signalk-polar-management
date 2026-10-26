@@ -169,11 +169,11 @@ module.exports = (app) => {
   plugin.schema = () => ({ type: 'object', properties: {} })
 
   plugin.registerWithRouter = (router) => {
-    router.get('/polars', (req, res) => {
+    router.access('readonly').get('/polars', (req, res) => {
       res.json(store.listWithMeta())
     })
 
-    router.get('/polars/:id', (req, res) => {
+    router.access('readonly').get('/polars/:id', (req, res) => {
       try {
         res.json(store.get(req.params.id))
       } catch (e) {
@@ -181,7 +181,7 @@ module.exports = (app) => {
       }
     })
 
-    router.get('/polars/:id/curves', (req, res) => {
+    router.access('readonly').get('/polars/:id/curves', (req, res) => {
       const step = req.query.step === undefined ? DEFAULT_STEP_DEG : Number(req.query.step)
       let table
       try {
@@ -197,7 +197,7 @@ module.exports = (app) => {
       }
     })
 
-    router.get('/polars/:id/validate', (req, res) => {
+    router.access('readonly').get('/polars/:id/validate', (req, res) => {
       let table
       try {
         table = store.get(req.params.id)
@@ -263,11 +263,11 @@ module.exports = (app) => {
       }
     })
 
-    router.get('/internet', async (req, res) => {
+    router.access('readonly').get('/internet', async (req, res) => {
       res.json({ online: await checkInternet() })
     })
 
-    router.get('/activePolar', (req, res) => {
+    router.access('readonly').get('/activePolar', (req, res) => {
       const id = settings.activePolar || null
       if (!id) {
         return res.json({ id: null, exists: false, valid: false, errors: [] })
@@ -298,7 +298,7 @@ module.exports = (app) => {
       })
     })
 
-    router.get('/performanceFactor', (req, res) => {
+    router.access('readonly').get('/performanceFactor', (req, res) => {
       res.json({ value: settings.performanceFactor })
     })
 
@@ -314,7 +314,7 @@ module.exports = (app) => {
       })
     })
 
-    router.get('/imports/formats', (req, res) => {
+    router.access('readonly').get('/imports/formats', (req, res) => {
       res.json(importService.listFormats())
     })
 
@@ -326,7 +326,7 @@ module.exports = (app) => {
       }
     })
 
-    router.get('/imports/sources', (req, res) => {
+    router.access('readonly').get('/imports/sources', (req, res) => {
       res.json(importService.listSources())
     })
 
@@ -352,11 +352,11 @@ module.exports = (app) => {
       }
     })
 
-    router.get('/exports/formats', (req, res) => {
+    router.access('readonly').get('/exports/formats', (req, res) => {
       res.json([{ id: 'json', name: 'Canonical JSON', description: 'polar-format canonical document' }, ...exportService.listFormats()])
     })
 
-    router.get('/polars/:id/export/:format', (req, res) => {
+    router.access('readonly').get('/polars/:id/export/:format', (req, res) => {
       try {
         const resource = store.get(req.params.id)
         const text = exportService.exportText(req.params.format, resource)

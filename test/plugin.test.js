@@ -5,6 +5,47 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const pluginFactory = require('../index')
+
+function withRoutePolicies(router) {
+  if (router.routePolicies instanceof Map) return router
+
+  const policies = new Map()
+  const methods = ['get', 'post', 'put', 'patch', 'delete']
+  const originalMethods = new Map()
+  for (const method of methods) {
+    if (typeof router[method] !== 'function') continue
+    const original = router[method]
+    originalMethods.set(method, original)
+    router[method] = (route, ...handlers) => {
+      policies.set(`${method.toUpperCase()} ${route}`, 'admin')
+      return original.call(router, route, ...handlers)
+    }
+  }
+
+  router.access = (level) => {
+    if (level !== 'readonly' && level !== 'readwrite') {
+      throw new Error(`Unsupported route access level: ${level}`)
+    }
+    const scopedRouter = {}
+    for (const [method, original] of originalMethods) {
+      scopedRouter[method] = (route, ...handlers) => {
+        policies.set(`${method.toUpperCase()} ${route}`, level)
+        return original.call(router, route, ...handlers)
+      }
+    }
+    return scopedRouter
+  }
+  router.routePolicies = policies
+  return router
+}
+
+function createTestPlugin(app) {
+  const plugin = pluginFactory(app)
+  const registerWithRouter = plugin.registerWithRouter
+  plugin.registerWithRouter = (router) => registerWithRouter(withRoutePolicies(router))
+  return plugin
+}
 
 function createFakeApp(dataDir) {
   const registeredProviders = []
@@ -34,12 +75,53 @@ describe('plugin lifecycle', () => {
   })
 
   afterEach(() => {
-    fs.rmSync(dataDir, { recursive: true, force: true })
+    fs.rmSync(dataDir, { recursive: true, force: true     })
+  })
+
+  describe('plugin route access policies', () => {
+    it('allows readonly access only to static import and export catalogs', () => {
+      const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'polar-management-routes-'))
+      try {
+        const plugin = createTestPlugin(createFakeApp(dataDir))
+        const router = {
+          get: () => {},
+          put: () => {},
+          post: () => {},
+          delete: () => {}
+        }
+        plugin.registerWithRouter(router)
+
+        assert.deepEqual(Object.fromEntries(router.routePolicies), {
+          'GET /polars': 'readonly',
+          'GET /polars/:id': 'readonly',
+          'GET /polars/:id/curves': 'readonly',
+          'GET /polars/:id/validate': 'readonly',
+          'POST /polars/:id/copy': 'admin',
+          'PUT /polars/:id': 'admin',
+          'DELETE /polars/:id': 'admin',
+          'POST /polars/:id/rename': 'admin',
+          'GET /internet': 'readonly',
+          'GET /activePolar': 'readonly',
+          'PUT /activePolar': 'admin',
+          'GET /performanceFactor': 'readonly',
+          'PUT /performanceFactor': 'admin',
+          'GET /imports/formats': 'readonly',
+          'POST /imports/text/:format': 'admin',
+          'GET /imports/sources': 'readonly',
+          'GET /imports/sources/:source/search': 'admin',
+          'POST /imports/sources/:source/items/:externalId': 'admin',
+          'GET /exports/formats': 'readonly',
+          'GET /polars/:id/export/:format': 'readonly'
+        })
+      } finally {
+        fs.rmSync(dataDir, { recursive: true, force: true })
+      }
+    })
   })
 
   it('start -> stop -> start succeeds with empty config', () => {
     const app = createFakeApp(dataDir)
-    const plugin = require('../index')(app)
+    const plugin = createTestPlugin(app)
 
     assert.doesNotThrow(() => plugin.start({}))
     assert.doesNotThrow(() => plugin.stop())
@@ -49,7 +131,7 @@ describe('plugin lifecycle', () => {
 
   it('registers a resource provider for type polars', () => {
     const app = createFakeApp(dataDir)
-    const plugin = require('../index')(app)
+    const plugin = createTestPlugin(app)
     plugin.start({})
     assert.equal(app._registeredProviders.length, 1)
     assert.equal(app._registeredProviders[0].type, 'polars')
@@ -58,7 +140,7 @@ describe('plugin lifecycle', () => {
 
   it('publishes metadata for active polar and performance factor paths', () => {
     const app = createFakeApp(dataDir)
-    const plugin = require('../index')(app)
+    const plugin = createTestPlugin(app)
 
     plugin.start({})
     const meta = app._messages.flatMap(message => message.delta.updates[0].meta || [])
@@ -70,7 +152,7 @@ describe('plugin lifecycle', () => {
 
   it('publishes, persists and clears the performance factor', () => {
     const app = createFakeApp(dataDir)
-    const plugin = require('../index')(app)
+    const plugin = createTestPlugin(app)
     plugin.start({ performanceFactor: 0.85 })
 
     assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
@@ -105,7 +187,7 @@ describe('plugin lifecycle', () => {
 
   it('rejects out-of-range performance factors', () => {
     const app = createFakeApp(dataDir)
-    const plugin = require('../index')(app)
+    const plugin = createTestPlugin(app)
     plugin.start({})
 
     const routes = {}
