@@ -3,6 +3,7 @@
 const path = require('path')
 const { validatePolarTable } = require('polar-format')
 const PolarStore = require('./lib/PolarStore')
+const PolarService = require('./lib/PolarService')
 const { ImportService, ImportError } = require('./lib/import/ImportService')
 const { ExportService, ExportError } = require('./lib/export/ExportService')
 const { buildCurves, DEFAULT_STEP_DEG } = require('./lib/CurveService')
@@ -17,6 +18,7 @@ module.exports = (app) => {
   let store = null
   let importService = null
   let exportService = null
+  let polarService = null
   let activePolarPublished = false
   let performanceFactorPublished = false
 
@@ -87,14 +89,19 @@ module.exports = (app) => {
       updates: [{ values: [{ path: ACTIVE_POLAR_PATH, value }] }]
     })
     activePolarPublished = !!id
+    polarService?.notify({ type: 'selection' })
   }
 
   function clearActivePolar() {
-    if (!activePolarPublished) return
+    if (!activePolarPublished) {
+      polarService?.notify({ type: 'selection' })
+      return
+    }
     app.handleMessage(plugin.id, {
       updates: [{ values: [{ path: ACTIVE_POLAR_PATH, value: null }] }]
     })
     activePolarPublished = false
+    polarService?.notify({ type: 'selection' })
   }
 
   function publishPerformanceFactor(value) {
@@ -102,6 +109,7 @@ module.exports = (app) => {
       updates: [{ values: [{ path: PERFORMANCE_FACTOR_PATH, value }] }]
     })
     performanceFactorPublished = true
+    polarService?.notify({ type: 'performanceFactor' })
   }
 
   function clearPerformanceFactor() {
@@ -113,6 +121,7 @@ module.exports = (app) => {
   }
 
   plugin.start = (options) => {
+    if (polarService) plugin.stop()
     settings = { activePolar: '', performanceFactor: DEFAULT_PERFORMANCE_FACTOR, ...options }
     settings.performanceFactor = sanitizePerformanceFactor(settings.performanceFactor)
     store = new PolarStore(path.join(app.getDataDirPath(), 'polars'))
@@ -156,9 +165,16 @@ module.exports = (app) => {
     })
 
     app.setPluginStatus(`Managing ${store.list().length} polar(s)`)
+    polarService = new PolarService(store, () => settings, (message) => app.setPluginError(message))
+    app.emitPropertyValue('polarManagement', polarService.api)
   }
 
   plugin.stop = () => {
+    if (polarService) {
+      polarService.stop()
+      polarService = null
+      app.emitPropertyValue('polarManagement', { apiVersion: 1, available: false })
+    }
     clearActivePolar()
     clearPerformanceFactor()
     store = null
@@ -325,9 +341,10 @@ module.exports = (app) => {
       if (id && !store.exists(id)) {
         return res.status(404).json({ error: `Polar not found: ${id}` })
       }
-      settings.activePolar = id || ''
-      app.savePluginOptions(settings, (err) => {
+      const nextSettings = { ...settings, activePolar: id || '' }
+      app.savePluginOptions(nextSettings, (err) => {
         if (err) return res.status(500).json({ error: err.message })
+        settings.activePolar = nextSettings.activePolar
         if (id) publishActivePolar(id)
         else clearActivePolar()
         res.json({ id: settings.activePolar || null })
@@ -342,9 +359,10 @@ module.exports = (app) => {
       if (!isValidPerformanceFactor(req.body?.value)) {
         return res.status(400).json({ error: 'Performance factor must be between 0 and 1' })
       }
-      settings.performanceFactor = sanitizePerformanceFactor(req.body?.value)
-      app.savePluginOptions(settings, (err) => {
+      const nextSettings = { ...settings, performanceFactor: sanitizePerformanceFactor(req.body?.value) }
+      app.savePluginOptions(nextSettings, (err) => {
         if (err) return res.status(500).json({ error: err.message })
+        settings.performanceFactor = nextSettings.performanceFactor
         publishPerformanceFactor(settings.performanceFactor)
         res.json({ value: settings.performanceFactor })
       })

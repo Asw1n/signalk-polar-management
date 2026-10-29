@@ -73,3 +73,15 @@ and `null` clears the year. The existing rename API remains available for compat
 ## Why this is useful
 
 This plugin is most useful when used together with other sailing apps in Signal K. Those apps can do the actual performance calculations, routing help, or sailing analysis, but they need a good polar to work with.
+
+## In-process calculations for other plugins
+
+Plugins in the same Signal K server can discover the versioned `polarManagement`
+service through PropertyValues and retain live calculation handles. An active
+handle automatically follows the current selection and shared performance factor
+on every call. A specific-polar handle follows that stored table, using factor 1
+unless an explicit factor is supplied. Optional change subscriptions let consumers
+react without being required to keep calculations current.
+
+See the [in-process API design and consumer guide](./docs/in-process-api.md)
+for discovery, calculations, notifications, errors and lifecycle behaviour.
