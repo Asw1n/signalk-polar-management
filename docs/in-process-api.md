@@ -22,9 +22,16 @@ The service contract has `apiVersion: 1`.
 - There are **no snapshots**. A long calculation can observe configuration
   changes between calls. Freezing a routing scenario is outside this API.
 
-Prepared `polar-math` tables are private and shared between handles. Preparation
-happens at startup and after successful managed storage mutations, never during
-a calculation call. Selection and factor changes do not rebuild tables.
+Prepared `polar-math` tables are private and shared between handles. Only the
+active table is prepared at startup. Other tables are prepared when first
+requested through `polar(id)`, or when selected as active. Importing or editing
+an unused table does not prepare it. Successful managed mutations refresh only
+previously requested tables, including IDs that were missing or deleted.
+Preparation never happens during a calculation call. Selecting an already
+prepared table or changing a factor does not rebuild it.
+Prepared tables remain cached until deletion or plugin stop; there is no
+automatic eviction. Missing IDs remain tracked until stop so retained handles
+recover if those IDs are created again.
 Direct filesystem edits are not monitored; restart the plugin to load them.
 
 This deliberately extends the original resource-only architecture: management

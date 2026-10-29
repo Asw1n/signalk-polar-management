@@ -5,6 +5,9 @@
 ### Added
 - Other Signal K plugins can calculate speeds, VMG, targets and sailing ranges directly using live polar handles. Active handles follow the vessel's current polar and performance factor automatically; specific-polar handles support independent performance assumptions and optional change notifications.
 
+### Changed
+- Prepare calculation data only for the active polar and specifically requested polars, avoiding startup work and memory use for unused stored tables.
+
 ## 1.4.0 - 2026-10-29
 
 ### Added

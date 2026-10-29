@@ -37,11 +37,88 @@ describe('live polar service', () => {
     fs.rmSync(directory, { recursive: true, force: true })
   })
 
+  it('prepares only the active table at startup even with 200 stored polars', (t) => {
+    service.stop()
+    for (let i = 0; i < 198; i++) store.save(`unused-${i}`, table())
+    const read = t.mock.method(store, 'get')
+    const prepare = t.mock.method(Polar, 'fromTable')
+    service = new PolarService(store, () => settings, message => errors.push(message))
+    assert.equal(store.list().length, 200)
+    assert.equal(read.mock.callCount(), 1)
+    assert.equal(prepare.mock.callCount(), 1)
+    assert.deepEqual([...service.cache.keys()], ['first'])
+    service.api.activePolar()
+    service.api.polar('first')
+    assert.equal(prepare.mock.callCount(), 1)
+    service.api.polar('second')
+    service.api.polar('second', { performanceFactor: 0.8 })
+    assert.equal(read.mock.callCount(), 2)
+    assert.equal(prepare.mock.callCount(), 2)
+    assert.equal(service.cache.size, 2)
+  })
+
+  it('does not prepare unused imports, edits, copies or renames until requested', (t) => {
+    const prepare = t.mock.method(Polar, 'fromTable')
+    store.saveCanonical('imported', table())
+    store.save('second', table(6))
+    store.modify('second', { id: 'second', name: 'Unused' })
+    store.copy('second', 'copy')
+    store.rename('copy', 'renamed')
+    assert.equal(prepare.mock.callCount(), 0)
+    assert.deepEqual([...service.cache.keys()], ['first'])
+    assert.equal(service.api.polar('renamed').speedAt({ tws: 5, twa: Math.PI / 2 }).value, 7)
+    assert.equal(prepare.mock.callCount(), 1)
+  })
+
+  it('prepares a new selection before notifying consumers and reuses it on later selections', (t) => {
+    const prepare = t.mock.method(Polar, 'fromTable')
+    const active = service.api.activePolar()
+    const results = []
+    active.onChange(() => results.push(active.speedAt({ tws: 5, twa: Math.PI / 2 }).value))
+    settings.activePolar = 'second'
+    service.notify({ type: 'selection' })
+    assert.deepEqual(results, [8.1])
+    assert.equal(prepare.mock.callCount(), 1)
+    settings.activePolar = 'first'
+    service.notify({ type: 'selection' })
+    settings.activePolar = 'second'
+    service.notify({ type: 'selection' })
+    assert.deepEqual(results, [8.1, 4.5, 8.1])
+    assert.equal(prepare.mock.callCount(), 1)
+  })
+
+  it('starts with no prepared tables when there is no active selection', (t) => {
+    service.stop()
+    settings.activePolar = ''
+    const prepare = t.mock.method(Polar, 'fromTable')
+    service = new PolarService(store, () => settings, message => errors.push(message))
+    const active = service.api.activePolar()
+    assert.equal(service.cache.size, 0)
+    assert.equal(prepare.mock.callCount(), 0)
+    settings.activePolar = 'later'
+    service.notify({ type: 'selection' })
+    assert.equal(active.speedAt({}).state.reason, 'polar_not_found')
+    store.save('later', table())
+    assert.equal(active.speedAt({ tws: 5, twa: Math.PI / 2 }).value, 4.5)
+    assert.equal(prepare.mock.callCount(), 1)
+  })
+
+  it('does not prepare tables when handles are acquired from a stopped service', (t) => {
+    service.stop()
+    const prepare = t.mock.method(Polar, 'fromTable')
+    const handle = service.api.polar('second')
+    assert.equal(handle.speedAt({}).state.reason, 'provider_stopped')
+    assert.equal(service.cache.size, 0)
+    assert.equal(service.requested.size, 0)
+    assert.equal(prepare.mock.callCount(), 0)
+  })
+
   it('uses the latest selection and factor on every call without reacquisition or subscriptions', () => {
     const active = service.api.activePolar()
     const input = { tws: 5, twa: Math.PI / 2 }
     assert.equal(active.speedAt(input).value, 4.5)
     settings.activePolar = 'second'
+    service.notify({ type: 'selection' })
     assert.equal(active.speedAt(input).value, 8.1)
     settings.performanceFactor = 0.5
     assert.equal(active.speedAt(input).value, 4.5)
@@ -131,6 +208,8 @@ describe('live polar service', () => {
     fs.writeFileSync(path.join(directory, 'second.json'), '{}')
     service = new PolarService(store, () => settings, message => errors.push(message))
     const active = service.api.activePolar()
+    assert.equal(errors.length, 1)
+    service.api.polar('second')
     assert.equal(errors.length, 2)
     assert.match(errors[0], /Cannot prepare polar/)
     for (let i = 0; i < 10; i++) assert.equal(active.speedAt({}).state.reason, 'invalid_polar')
@@ -198,6 +277,7 @@ describe('live polar service', () => {
     assert.deepEqual(events, ['stopped', 'stopped'])
     assert.equal(service.api.available, false)
     assert.equal(service.cache.size, 0)
+    assert.equal(service.requested.size, 0)
     assert.equal(service.listeners.size, 0)
     assert.equal(store.onChange, null)
     assert.equal(specific.targetsAt({}).state.reason, 'provider_stopped')
