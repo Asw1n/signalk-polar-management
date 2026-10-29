@@ -556,7 +556,7 @@ function buildImportPage() {
     <div class="form-group mb-2">
       <label>File</label>
       <input type="file" id="fileImportFile" class="form-control form-control-sm">
-      <div class="form-text small text-muted">Canonical JSON, Jieter or Expedition — the format is detected automatically.</div>
+      <div class="form-text small text-muted">Canonical JSON, Jieter, Expedition or TimeZero Wind_Polar.xml — the format is detected automatically.</div>
     </div>
   `
   fileCard.body.appendChild(fileFormWrap)
@@ -590,7 +590,7 @@ function buildImportPage() {
     <div class="form-group mb-2">
       <label>Text</label>
       <textarea id="textImportText" class="form-control form-control-sm" rows="6"></textarea>
-      <div class="form-text small text-muted">Canonical JSON, Jieter or Expedition — the format is detected automatically.</div>
+      <div class="form-text small text-muted">Canonical JSON, Jieter, Expedition or TimeZero Wind_Polar.xml — the format is detected automatically.</div>
     </div>
   `
   textCard.body.appendChild(textFormWrap)
