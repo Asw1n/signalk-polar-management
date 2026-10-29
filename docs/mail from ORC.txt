@@ -1,0 +1,37 @@
+Dear Sailor Services user, 
+
+Sailor Services is presently undergoing a major upgrade.
+
+Sailor Services is undergoing a complete overhaul, introducing an updated layout and new functionality. Because this upgrade is actively in development, some pages remain under construction and further enhancements will be rolled out shortly.
+.
+You can access the updated platform directly at https://sas.orc.org. 
+
+Your account remains unchanged—log in using your existing email address and password to find all your credits and boats right where you left them.
+
+Key updates
+
+Improved User Experience: Designed for seamless operation across smartphones, tablets, and desktop computers.
+Self-service password management: Update your password anytime directly within the Account section.
+Secure password resets: Passwords are never sent via email; selecting “Forgot your password?” will send a secure link to reset it.
+Updated sign-in options: Google authentication remains active, but Facebook sign-in has been discontinued. Facebook users should use “Forgot your password?” with their email to establish a new password.
+Centralized credit management: Purchase credits directly on the site and view all past transactions in a single location.
+Enhanced security protections: Google reCAPTCHA safeguards certificate copies and site content against automated scraping, occasionally prompting a quick verification check.
+Please change your password now
+
+Similar to many online platforms, Sailor Services faces automated login attempts using login credentials compromised on other websites. Therefore, we strongly recommend taking action:
+Sign in at https://sas.orc.org and open Account.
+Under Password, enter your current password and a new one: 8 to 20 characters, not used on any other site. A password manager can make one up for you and remember it.
+Changing it signs you out of Sailor Services everywhere else.
+This updated password will also apply across both the desktop and online versions of RaceFlow and the ORC Scorer.
+Additionally, if you utilize the desktop ORC Scorer, update your password within its Sailor Services configuration to prevent upload rejections.
+
+For developers
+
+If your website or application downloads ORC rating data from data.orc.org/public/WPub.dll (DownRMS, DownBoatRMS, activecerts and similar), please move to the ORC API. 
+WPub.dll will stop serving requests on 31 January 2027. Ask for an API key on the Developers page, linked at the foot of every page on sas.orc.org.
+The documentation is at https://sas.orc.org/api-docs.php.
+The actions keep their names, parameters and output, so for most programs only the address changes. Programs that read WPub’s XML can ask for the same document with format=xml.
+If you have any questions or require assistance, please feel free to reach out to us at support@orc.org.
+
+Regards,
+ORC Support
