@@ -5,6 +5,9 @@
 ### Added
 - Import TimeZero `Wind_Polar.xml` polar files (TZ Professional, TZ Navigator); the format is detected automatically like the others.
 
+### Fixed
+- Preserve specific errors from recognised formats during automatic import, including the hint to use `Wind_Polar.xml` when a TimeZero wave polar is selected.
+
 ## 1.3.0 - 2026-10-26
 
 ### Added

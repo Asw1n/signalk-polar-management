@@ -6,7 +6,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const TimeZeroImporter = require('../lib/import/TimeZeroImporter')
-const { ImportService } = require('../lib/import/ImportService')
+const { ImportService, ImportError } = require('../lib/import/ImportService')
 const PolarStore = require('../lib/PolarStore')
 const SI = require('../lib/SI')
 
@@ -86,6 +86,53 @@ describe('TimeZeroImporter', () => {
 })
 
 describe('ImportService with TimeZero files', () => {
+  it('keeps the generic error for unrecognised content', () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'polar-tz-'))
+    try {
+      const service = new ImportService(new PolarStore(dataDir))
+      assert.throws(() => service.importText('auto', { content: 'not a polar' }), {
+        status: 400,
+        message: /Could not recognise the polar format/
+      })
+    } finally {
+      fs.rmSync(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('continues trying other importers after a detected format rejects the content', () => {
+    const acceptedImporter = { parse: () => ({}) }
+    const registry = { all: () => [
+      { detect: () => true, parse: () => { throw new Error('Rejected by first importer') } },
+      acceptedImporter
+    ] }
+
+    assert.equal(ImportService.prototype.detectFormat.call({ registry }, 'shared input'), acceptedImporter)
+  })
+
+  for (const [label, content] of [
+    ['wave polar', WAVE_POLAR],
+    ['empty wave polar', '<?xml version="1.0"?><!-- TimeZero --><PolarMultiple/>']
+  ]) {
+    it(`rejects an automatically detected ${label} with the wind-polar hint`, () => {
+      const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'polar-tz-'))
+      try {
+        const service = new ImportService(new PolarStore(dataDir))
+        const filesBefore = fs.readdirSync(dataDir)
+        for (const format of ['auto', undefined]) {
+          assert.throws(() => service.importText(format, { content }), (error) => {
+            assert.ok(error instanceof ImportError)
+            assert.equal(error.status, 400)
+            assert.equal(error.message, 'This is a TimeZero Wave_Polar.xml; import the Wind_Polar.xml instead')
+            return true
+          })
+        }
+        assert.deepEqual(fs.readdirSync(dataDir), filesBefore)
+      } finally {
+        fs.rmSync(dataDir, { recursive: true, force: true })
+      }
+    })
+  }
+
   it('detects and stores a TimeZero wind polar', () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'polar-tz-'))
     try {
