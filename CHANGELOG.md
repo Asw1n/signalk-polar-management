@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 - 2026-10-29
 
 ### Added
 - Import TimeZero `Wind_Polar.xml` polar files (TZ Professional, TZ Navigator); the format is detected automatically like the others.
