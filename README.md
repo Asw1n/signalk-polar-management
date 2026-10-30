@@ -8,6 +8,121 @@ This plugin makes it easy to store more than one polar, pick the one you want to
 
 Requires Signal K Server >=2.31.0.
 
+## Canonical v1 and v2
+
+Resources accept and validate both canonical `polarTable` v1 and `polarSet` v2
+using `polar-format` 2. Existing resources are **not migrated**. Canonical JSON
+imports retain their version; all existing vendor importers (including online
+ORC certificates and TimeZero wind XML) still produce v1.
+
+A v2 resource contains a source-supplied `best` table and optional descriptive
+sailplans, each with its own grid and targets. Storage, copy, rename and boat
+metadata edits preserve every nested field: auxiliary heel/reef/flat matrices,
+nulls, targets, winning references and vessel-wide wave correction. Sail
+descriptions are not inventory associations or operational reef settings.
+
+Choose **View tables** in Polar management to inspect best or a sailplan's
+speed/auxiliary tables and exact supplied targets. Table selection is local;
+root boat metadata and wave context are not embedded-table metadata.
+
+### Math readiness and consumer rollout
+
+The production dependency remains the published `polar-math` 1.1.1. It cannot
+prepare v2 curves. Until a compatible math release is selected, v2 curve
+requests explicitly return **503** and in-process handles return
+`value: null` / `state.reason: "unsupported_math"` with a plugin error; storage,
+numeric table display, metadata editing, import and export remain available.
+There is no synthetic v1 math wrapper or silent fallback to a different table.
+Integration can be verified separately against immutable unreleased
+`polar-math` commit `4e33ef0be27ea0b85424be691504dc75ae3eb518`
+([math PR](https://github.com/Asw1n/polar-math/pull/2)); this is not a production
+dependency or a local link. Selecting a future math release is a remaining
+deployment prerequisite, not part of this no-release change.
+
+The active pointer remains `{ "href": "/resources/polars/<id>" }` at
+`vessels.self.polars.activePolar`: it selects the **complete document**, never a
+local display/export sailplan. No shared active-sailplan path is introduced.
+Before activating a v2 resource, every performance/navigation consumer must
+support v2. The UI requires confirmation; the activation API requires
+`{ "id": "...", "acknowledgeV2": true }`. This acknowledgment is not automatic
+consumer capability detection. Existing v1 activation and persisted active
+selection behavior are unchanged. The performance plugin is not modified here.
+Existing in-process handles always prepare a v2 document's **best** table;
+they never inherit the UI's local sailplan selection. Their lifecycle, factors,
+caching and change-notification contract are unchanged.
+
+## Import an ORC speed-guide HTML file
+
+Use **Import from file** and select the downloaded HTML guide. It participates
+in **automatic detection** and produces canonical **v2**, unlike existing
+importers. No manual format selection, internet access or standalone SYLK
+importer is required. This is separate from the online ORC certificate search.
+
+The importer reads numeric tables only, without executing scripts, loading
+external resources or interpreting graphics. When present, the embedded `.slk`
+download supplies higher-precision scalar data, checked against the visible
+table values at their display precision. Malformed or conflicting embedded data
+is rejected, not silently replaced by rounded values. Without that download,
+visible tables are used. AWS/AWA are deliberately not imported: the source's
+visible and spreadsheet apparent-wind conventions differ, and canonical v2 has
+no such fields.
+
+HTML is limited to 8 MiB before parsing. Signal K's JSON upload limit also
+applies (normally 10 MB, configurable by the server's `FILEUPLOADSIZELIMIT`);
+the JSON request may be larger than the original file because of escaping.
+The recognized ORC profile uses English Best Performance, Headsail (`Jib`) and
+Symmetric spinnaker (`Sym`) groups with the documented numeric columns.
+Each group supplies its own wind/angle grid and point counts; these are not
+hardcoded to the reference guide's eight winds and twelve reach angles.
+Unrecognized sail families, localized/alternate layouts, and non-scalar or
+formula-bearing embedded SYLK are rejected explicitly, never partly imported.
+
+Best performance is authoritative, not reconstructed from sailplan maxima.
+Each table retains its own supplied beat/run angles, speed, nonnegative VMG
+magnitude and available heel/reef/flat targets. No winning sailplan is guessed
+from approximate equality. Known sail names, source identifiers and square-metre
+areas are descriptive only. Knots and degrees become m/s and radians; model
+factors stay dimensionless, including values slightly above one.
+
+**ORC placeholder policy:** exact source BTV `0.01` knot values are treated as
+unavailable, as confirmed for these guides. Their speed and auxiliary matrix
+cells become `null`; corresponding placeholder beat/run targets are omitted.
+This is not a general low-speed threshold: zero and other small numeric speeds
+remain numeric. Do not interpret unavailable values as real sailing optima.
+
+## Export a document or selected table
+
+- **Complete canonical JSON** retains the document's version and all stored
+  information. This is the lossless/round-trip option, including v2 nulls,
+  references, auxiliary values and wave correction.
+- **Selected table** (best by default, or a chosen descriptive sailplan) offers
+  Expedition, Jieter, and canonical v1 JSON. For v2 these are explicitly
+  **lossy projections**, requiring acknowledgment. Other tables, sail
+  descriptions, auxiliary quantities, wave correction and winning references
+  are omitted. Supported root boat metadata is retained, not relabeled as
+  sailplan metadata. Text formats also round numbers and may lose target
+  details. Canonical v1 projection is not a lossless canonical v2 export.
+- Missing speeds are incompatible with these single-table formats and produce
+  an error. No interpolation, zero filling or flattening of the set occurs.
+  Existing v1 download actions retain their behavior.
+
+API: `GET /polars/{id}/export/json` exports the complete document and rejects
+table-selection parameters. For a v2 projection use
+`/polars/{id}/export/{expedition|jieter|json-v1}?scope=table&acknowledgeLoss=true`
+and optionally `&sailplanId=<document-local-id>`; omit the ID for best. Unknown
+IDs are errors, never best-table fallbacks. All routes have the
+`/plugins/signalk-polar-management` prefix.
+
+### Verification
+
+Run `npm test` for synthetic importer and v1/v2 storage, API, lifecycle and
+export regression tests. To additionally verify the private local ORC reference
+without copying it into the repository, set `ORC_SPEED_GUIDE_HTML` to its HTML
+file path before running the suite. That opt-in test checks all 336 source
+points, conversions, independent targets and confirmed placeholders, then tests
+round trips and every selected table. It also checks v2 curves when compatible
+math is installed; otherwise it verifies the explicit readiness error.
+
 ## HTTP endpoint access
 
 Signal K read-only users can view stored polar data, curves and validation, the current active selection and performance factor, export downloads, connectivity status, and import/export catalogs. External-source searches and all changes—including imports, selection changes, and other management operations—require administrator access. The standard Signal K Resource Provider API remains governed by the server's own authorization rules. Anonymous access is controlled by the server's security configuration and is not enabled by this plugin.
@@ -63,7 +178,8 @@ errors appear in the form so you can correct them without losing your edits.
 
 Changing the ID replaces the former Rename action. The new ID must be unique.
 If you modify the active polar's ID, its active selection follows the new ID.
-Polar speed data, source, and notes are preserved.
+All polar performance data (including nested v2 tables and wave correction),
+source, and notes are preserved.
 
 Administrators can make the same changes with `PUT /plugins/signalk-polar-management/polars/{id}/metadata`.
 The JSON body requires `id` and optionally accepts `name`, `boatType`, `sailnumber`,

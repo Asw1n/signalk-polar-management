@@ -6,6 +6,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const pluginFactory = require('../index')
+const { polarSet } = require('./fixtures/polarSet')
 
 function withRoutePolicies(router) {
   if (router.routePolicies instanceof Map) return router
@@ -285,6 +286,100 @@ describe('plugin lifecycle', () => {
         delete: () => {}
       })
     })
+
+      it('preserves complete v2 resources through provider, routes, metadata and active-pointer lifecycle', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const provider = app._registeredProviders[0].methods
+          const original = polarSet()
+          await provider.setResource('set', original)
+          const routes = {}
+          const router = {}
+          for (const method of ['get', 'put', 'post', 'delete']) {
+            router[method] = (route, handler) => { routes[`${method.toUpperCase()} ${route}`] = handler }
+          }
+          plugin.registerWithRouter(router)
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const headers = {}
+            const res = {
+              status: code => { status = code; return res },
+              json: value => { body = value },
+              send: value => { body = value },
+              set: (key, value) => { headers[key] = value },
+              end: () => {}
+            }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body, headers }
+          }
+          assert.deepEqual(await provider.getResource('set'), original)
+          assert.deepEqual(request('GET /polars/:id', { params: { id: 'set' } }).body, original)
+          assert.equal(request('GET /polars/:id/validate', { params: { id: 'set' } }).body.valid, true)
+          assert.equal((await provider.listResources()).set.kind, 'polarSet')
+          const exported = request('GET /polars/:id/export/:format', { params: { id: 'set', format: 'json' } })
+          assert.deepEqual(JSON.parse(exported.body), original)
+          assert.equal(exported.headers['Content-Type'], 'application/json')
+          const incompatible = request('GET /polars/:id/export/:format', {
+            params: { id: 'set', format: 'expedition' }, query: { scope: 'table', acknowledgeLoss: 'true' }
+          })
+          assert.equal(incompatible.status, 400)
+          assert.match(incompatible.body.error, /missing speeds/)
+          assert.equal(request('PUT /activePolar', { body: { id: 'set' } }).status, 409)
+          assert.equal(request('GET /activePolar').body.id, null)
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+          assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
+            { path: 'polars.activePolar', value: { href: '/resources/polars/set' } }
+          ])
+          assert.equal(request('GET /activePolar').body.valid, true)
+          const count = app._messages.length
+          const curves = request('GET /polars/:id/curves', { params: { id: 'set' }, query: { sailplanId: 'jib' } })
+          assert.ok([200, 503].includes(curves.status))
+          assert.equal(request('GET /polars/:id/curves', { params: { id: 'set' }, query: { sailplanId: 'unknown' } }).status, 400)
+          assert.equal(app._messages.length, count)
+          request('PUT /polars/:id/metadata', { params: { id: 'set' }, body: { id: 'renamed', name: 'Edited' } })
+          assert.deepEqual(await provider.getResource('renamed'), { ...original, name: 'Edited' })
+          assert.equal(request('GET /activePolar').body.id, 'renamed')
+          await assert.rejects(provider.deleteResource('renamed'), /active polar/)
+          assert.equal(request('DELETE /polars/:id', { params: { id: 'renamed' } }).status, 409)
+          assert.equal(request('PUT /activePolar', { body: { id: null } }).status, 200)
+          await provider.deleteResource('renamed')
+          await assert.rejects(provider.getResource('renamed'), /not found/)
+          assert.ok(app._messages.every(message => (message.delta.updates[0].values || []).every(value =>
+            ['polars.activePolar', 'polars.performanceFactor'].includes(value.path))))
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('does not change the active document when persisting a v2 activation fails', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          await app._registeredProviders[0].methods.setResource('set', polarSet())
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          app.savePluginOptions = (_, callback) => callback(new Error('Disk full'))
+          const count = app._messages.length
+          let status
+          const res = { status: code => { status = code; return res }, json: () => {} }
+          routes['PUT /activePolar']({ body: { id: 'set', acknowledgeV2: true } }, res)
+          assert.equal(status, 500)
+          assert.equal(app._messages.length, count)
+          let body
+          routes['GET /activePolar']({}, { json: value => { body = value } })
+          assert.equal(body.id, null)
+        } finally {
+          plugin.stop()
+        }
+      })
 
     afterEach(() => plugin.stop())
 

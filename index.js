@@ -1,7 +1,7 @@
 'use strict'
 
 const path = require('path')
-const { validatePolarTable } = require('polar-format')
+const { validatePolar } = require('polar-format')
 const PolarStore = require('./lib/PolarStore')
 const PolarService = require('./lib/PolarService')
 const { ImportService, ImportError } = require('./lib/import/ImportService')
@@ -207,9 +207,9 @@ module.exports = (app) => {
       }
       const performanceFactor = req.query.corrected === 'true' ? settings.performanceFactor : 1
       try {
-        res.json({ id: req.params.id, ...buildCurves(table, step, performanceFactor) })
+        res.json({ id: req.params.id, ...buildCurves(table, step, performanceFactor, req.query.sailplanId) })
       } catch (e) {
-        res.status(400).json({ error: e.message })
+        res.status(e.status || 400).json({ error: e.message })
       }
     })
 
@@ -220,7 +220,7 @@ module.exports = (app) => {
       } catch (e) {
         return res.status(404).json({ error: e.message })
       }
-      const result = validatePolarTable(table)
+      const result = validatePolar(table)
       res.json({
         valid: result.valid,
         errors: result.valid ? [] : result.errors.map(e => `${e.path}: ${e.message}`)
@@ -327,7 +327,7 @@ module.exports = (app) => {
       if (!store.exists(id)) {
         return res.json({ id, exists: false, valid: false, errors: [`Configured active polar '${id}' was not found`] })
       }
-      const result = validatePolarTable(store.get(id))
+      const result = validatePolar(store.get(id))
       res.json({
         id,
         exists: true,
@@ -338,8 +338,23 @@ module.exports = (app) => {
 
     router.put('/activePolar', (req, res) => {
       const id = req.body?.id
+      if (id !== undefined && id !== null && typeof id !== 'string') {
+        return res.status(400).json({ error: "'id' must be a string or null" })
+      }
       if (id && !store.exists(id)) {
         return res.status(404).json({ error: `Polar not found: ${id}` })
+      }
+      if (id) {
+        const document = store.get(id)
+        const validation = validatePolar(document)
+        if (!validation.valid) {
+          return res.status(400).json({ error: validation.errors.map(error => `${error.path}: ${error.message}`).join('; ') })
+        }
+        if (document.kind === 'polarSet' && req.body?.acknowledgeV2 !== true) {
+          return res.status(409).json({
+            error: 'Activating v2 requires acknowledgeV2: true after verifying all active-polar consumers support polarSet v2. This pointer selects the complete document, not a local display sailplan.'
+          })
+        }
       }
       const nextSettings = { ...settings, activePolar: id || '' }
       app.savePluginOptions(nextSettings, (err) => {
@@ -413,9 +428,10 @@ module.exports = (app) => {
     router.access('readonly').get('/polars/:id/export/:format', (req, res) => {
       try {
         const resource = store.get(req.params.id)
-        const text = exportService.exportText(req.params.format, resource)
-        const contentType = req.params.format === 'json' ? 'application/json' : 'text/plain'
-        const ext = req.params.format === 'json' ? 'json' : 'txt'
+        const text = exportService.exportText(req.params.format, resource, req.query)
+        const json = ['json', 'json-v1'].includes(req.params.format)
+        const contentType = json ? 'application/json' : 'text/plain'
+        const ext = json ? 'json' : 'txt'
         res.set('Content-Type', contentType)
         res.set('Content-Disposition', `attachment; filename="${req.params.id}.${ext}"`)
         res.send(text)
