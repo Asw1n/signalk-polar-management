@@ -51,6 +51,8 @@ function createFakeApp(dataDir) {
   const registeredProviders = []
   const messages = []
   const savedOptions = []
+  const propertyHistory = [undefined]
+  const propertyListeners = new Set()
   return {
     getDataDirPath: () => dataDir,
     handleMessage: (source, delta) => messages.push({ source, delta }),
@@ -61,6 +63,16 @@ function createFakeApp(dataDir) {
       cb && cb(null)
     },
     registerResourceProvider: (provider) => registeredProviders.push(provider),
+    emitPropertyValue: (name, value) => {
+      propertyHistory.push({ setter: 'signalk-polar-management', name, value })
+      for (const callback of propertyListeners) callback(propertyHistory)
+    },
+    onPropertyValues: (name, callback) => {
+      propertyListeners.add(callback)
+      callback(propertyHistory)
+      return () => propertyListeners.delete(callback)
+    },
+    _propertyHistory: propertyHistory,
     _registeredProviders: registeredProviders,
     _messages: messages,
     _savedOptions: savedOptions
@@ -128,6 +140,40 @@ describe('plugin lifecycle', () => {
     assert.doesNotThrow(() => plugin.stop())
     assert.doesNotThrow(() => plugin.start({}))
     plugin.stop()
+  })
+
+  it('announces only lifecycle transitions for early and late consumers and retires old handles', () => {
+    const app = createFakeApp(dataDir)
+    const plugin = createTestPlugin(app)
+    const early = []
+    const unsubscribe = app.onPropertyValues('polarManagement', history => early.push(history.at(-1)?.value))
+    assert.deepEqual(early, [undefined])
+    plugin.start({})
+    const first = early.at(-1)
+    assert.equal(first.apiVersion, 1)
+    assert.equal(first.available, true)
+    const handle = first.activePolar()
+    let late
+    app.onPropertyValues('polarManagement', history => { late = history.at(-1)?.value })
+    assert.equal(late, first)
+    plugin.stop()
+    assert.deepEqual(late, { apiVersion: 1, available: false })
+    assert.equal(first.available, false)
+    assert.equal(handle.speedAt({}).state.reason, 'provider_stopped')
+    plugin.start({})
+    assert.equal(late.available, true)
+    assert.notEqual(late, first)
+    assert.equal(handle.speedAt({}).state.reason, 'provider_stopped')
+    // Saving options may also call start again without a preceding stop.
+    const second = late
+    plugin.start({ performanceFactor: 0.8 })
+    assert.equal(second.available, false)
+    assert.equal(late.available, true)
+    assert.equal(early.length, 6)
+    unsubscribe()
+    plugin.stop()
+    assert.equal(early.length, 6)
+    assert.equal(app._propertyHistory.length, 7)
   })
 
   it('registers a resource provider for type polars', () => {
@@ -252,6 +298,58 @@ describe('plugin lifecycle', () => {
       routes[route](req, res)
       return { status, body }
     }
+
+    it('keeps acquired handles live through resource writes, selection, factors and metadata renames', async () => {
+      await provider.setResource('original', original)
+      const api = app._propertyHistory.at(-1).value
+      const active = api.activePolar()
+      const specific = api.polar('original')
+      const activeEvents = []
+      const specificEvents = []
+      active.onChange(event => activeEvents.push(event.type))
+      specific.onChange(event => specificEvents.push(event.type))
+      const input = { tws: 5, twa: 0, extrapolate: false }
+      assert.equal(active.speedAt(input).state.reason, 'no_active_polar')
+      assert.equal(request('PUT /activePolar', { body: { id: 'original' } }).status, 200)
+      assert.equal(active.speedAt(input).value, 1)
+      request('PUT /performanceFactor', { body: { value: 0.5 } })
+      assert.equal(active.speedAt(input).value, 0.5)
+      assert.equal(specific.speedAt(input).value, 1)
+      const updated = { ...original, values: { boatSpeedMatrix: [[4, 8]] } }
+      assert.equal(request('PUT /polars/:id', { params: { id: 'original' }, body: updated }).status, 200)
+      assert.equal(active.speedAt(input).value, 2)
+      assert.equal(specific.speedAt(input).value, 4)
+      await provider.setResource('original', original)
+      assert.equal(active.speedAt(input).value, 0.5)
+      request('PUT /polars/:id/metadata', { params: { id: 'original' }, body: { id: 'renamed' } })
+      assert.equal(active.speedAt(input).value, 0.5)
+      assert.equal(specific.speedAt(input).state.reason, 'polar_not_found')
+      const renamed = api.polar('renamed')
+      request('PUT /activePolar', { body: { id: null } })
+      assert.equal(active.speedAt(input).state.reason, 'no_active_polar')
+      await provider.deleteResource('renamed')
+      assert.equal(renamed.speedAt(input).state.reason, 'polar_not_found')
+      assert.ok(activeEvents.includes('selection'))
+      assert.ok(activeEvents.includes('performanceFactor'))
+      assert.ok(activeEvents.includes('saved'))
+      assert.ok(activeEvents.includes('modified'))
+      assert.ok(!specificEvents.includes('selection'))
+      assert.ok(!specificEvents.includes('performanceFactor'))
+      assert.equal(app._propertyHistory.length, 2)
+    })
+
+    it('does not expose failed selection or factor saves to live calculations', async () => {
+      await provider.setResource('original', original)
+      const active = app._propertyHistory.at(-1).value.activePolar()
+      request('PUT /activePolar', { body: { id: 'original' } })
+      const events = []
+      active.onChange(event => events.push(event))
+      app.savePluginOptions = (_options, callback) => callback(new Error('Cannot save'))
+      assert.equal(request('PUT /activePolar', { body: { id: null } }).status, 500)
+      assert.equal(request('PUT /performanceFactor', { body: { value: 0.1 } }).status, 500)
+      assert.equal(active.speedAt({ tws: 5, twa: 0, extrapolate: false }).value, 1)
+      assert.deepEqual(events, [])
+    })
 
     it('modifies metadata visible through both plugin and resource provider APIs', async () => {
       await provider.setResource('original', original)

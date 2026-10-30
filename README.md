@@ -73,3 +73,54 @@ and `null` clears the year. The existing rename API remains available for compat
 ## Why this is useful
 
 This plugin is most useful when used together with other sailing apps in Signal K. Those apps can do the actual performance calculations, routing help, or sailing analysis, but they need a good polar to work with.
+
+## In-process calculations for other plugins
+
+Plugins in the same Signal K server can discover the versioned `polarManagement`
+service through PropertyValues and retain live calculation handles. An active
+handle automatically follows the current selection and shared performance factor
+on every call. A specific-polar handle follows that stored table, using factor 1
+unless an explicit factor is supplied. Optional change subscriptions let consumers
+react without being required to keep calculations current.
+
+For example, inside a consumer plugin:
+
+```js
+let activePolar = null
+let unsubscribeDiscovery = null
+
+// In plugin.start():
+unsubscribeDiscovery = app.onPropertyValues('polarManagement', history => {
+  const service = history.findLast(
+    entry => entry?.setter === 'signalk-polar-management'
+  )?.value
+
+  activePolar = null
+  if (service?.apiVersion !== 1 || service.available !== true ||
+      typeof service.activePolar !== 'function' ||
+      typeof service.polar !== 'function') return
+
+  activePolar = service.activePolar()
+
+  // Alternatively, request a specific stored polar:
+  // const raw = service.polar('cruising') // factor defaults to 1
+  // const adjusted = service.polar('cruising', { performanceFactor: 0.85 })
+})
+
+// In the consumer's calculation callback (SI units: m/s and radians):
+const result = activePolar?.speedAt({ tws: 8, twa: 1.2 })
+if (result?.value !== null && result?.value !== undefined) {
+  const targetSpeed = result.value // m/s; zero is a valid result
+  // Use targetSpeed in the consumer's calculations.
+}
+// The retained handle uses the current selection and factor on every call.
+// value: null means no usable speed; inspect result.state for the reason.
+
+// In plugin.stop():
+unsubscribeDiscovery?.()
+unsubscribeDiscovery = null
+activePolar = null
+```
+
+See the [in-process API design and consumer guide](./docs/in-process-api.md)
+for discovery, calculations, notifications, errors and lifecycle behaviour.
