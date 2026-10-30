@@ -87,6 +87,7 @@ let orcResults = null // null = no search run yet
 let activePage = 'active'
 let polarSort = { key: 'name', direction: 'asc' }
 let canvasObserver = null
+const curveRequests = new WeakMap()
 
 const POLAR_COLUMNS = [
   { key: 'name', label: 'Boat name', value: polar => polar.name || polar.id },
@@ -139,14 +140,17 @@ function buildPolarTable({ selectable = false, actions = false } = {}) {
           ${POLAR_COLUMNS.map(column => `<td>${escapeHtml(column.value(polar))}</td>`).join('')}
           ${actions ? `
             <td class="polar-actions">
+              <button class="btn btn-link btn-sm" data-action="preview" data-id="${escapeHtml(polar.id)}">View tables</button>
               <button class="btn btn-link btn-sm" data-action="modify" data-id="${escapeHtml(polar.id)}">Modify</button>
               <button class="btn btn-link btn-sm" data-action="copy" data-id="${escapeHtml(polar.id)}">Copy</button>
               <div class="dropdown d-inline">
                 <button class="btn btn-link btn-sm dropdown-toggle" type="button" data-dropdown-toggle>Export</button>
                 <div class="dropdown-menu dropdown-menu-right">
-                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/json" download>Canonical JSON</a>
-                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/jieter" download>Jieter text</a>
-                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/expedition" download>Expedition text</a>
+                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/json" download>Complete canonical JSON</a>
+                  ${polar.kind === 'polarSet'
+                    ? `<button class="dropdown-item" data-action="preview" data-id="${escapeHtml(polar.id)}">Selected table (lossy)...</button>`
+                    : `<a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/jieter" download>Jieter text</a>
+                       <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/expedition" download>Expedition text</a>`}
                 </div>
               </div>
               <button class="btn btn-link btn-sm text-danger" data-action="delete" data-id="${escapeHtml(polar.id)}">Delete</button>
@@ -272,13 +276,29 @@ function buildActivePage() {
   const activePolar = activeStatus.exists && activeStatus.valid ? polarById(activeStatus.id) : null
 
   if (activePolar) {
+    if (activePolar.kind === 'polarSet') {
+      const label = document.createElement('label')
+      label.textContent = 'Local display table (does not change the active document)'
+      const select = document.createElement('select')
+      select.className = 'form-select form-select-sm mb-2'
+      select.innerHTML = activePolar.tables.map((choice, index) => `<option value="${index}">${escapeHtml(choice.name)}</option>`).join('')
+      label.appendChild(select)
+      colGraph.appendChild(label)
+      select.addEventListener('change', () => {
+        loadOverviewCurves(activeStatus.id, canvasInstance, activePolar.tables[Number(select.value)].id, curveError)
+      })
+    }
     const canvas = document.createElement('canvas')
     canvas.id = 'polarCanvas'
     canvas.className = 'polar-canvas'
     colGraph.appendChild(canvas)
+    const curveError = document.createElement('p')
+    curveError.className = 'text-danger small'
+    curveError.setAttribute('role', 'status')
+    colGraph.appendChild(curveError)
     const canvasInstance = new window.PolarCanvas(canvas)
     observeCanvasSize(canvas, canvasInstance)
-    loadOverviewCurves(activeStatus.id, canvasInstance)
+    loadOverviewCurves(activeStatus.id, canvasInstance, undefined, curveError)
   } else {
     const placeholder = document.createElement('div')
     placeholder.className = 'text-muted small'
@@ -365,8 +385,13 @@ function buildActivePage() {
     table.addEventListener('change', async (event) => {
       if (event.target.name !== 'activePolarRadio') return
       try {
+        const v2 = polarById(event.target.dataset.id)?.kind === 'polarSet'
+        if (v2 && !window.confirm('Activate this complete v2 document? All performance consumers must support polarSet v2 first. The local display table is NOT shared.')) {
+          event.target.checked = false
+          return
+        }
         await api('activePolar', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: event.target.dataset.id })
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: event.target.dataset.id, ...(v2 ? { acknowledgeV2: true } : {}) })
         })
         await loadActiveStatus()
         setMessage(`Active polar set to '${event.target.dataset.id}'`)
@@ -380,12 +405,19 @@ function buildActivePage() {
   return wrap
 }
 
-async function loadOverviewCurves(id, canvas) {
+async function loadOverviewCurves(id, canvas, sailplanId, errorEl) {
+  const request = {}
+  curveRequests.set(canvas, request)
+  canvas.loadCurves({ curves: [] })
+  if (errorEl) errorEl.textContent = ''
   try {
-    const curves = await api(`polars/${encodeURIComponent(id)}/curves?step=5&corrected=true`)
-    canvas.loadCurves(curves)
+    const selection = sailplanId === undefined ? '' : `&sailplanId=${encodeURIComponent(sailplanId)}`
+    const curves = await api(`polars/${encodeURIComponent(id)}/curves?step=5&corrected=true${selection}`)
+    if (curveRequests.get(canvas) === request) canvas.loadCurves(curves)
   } catch (e) {
-    setMessage(e.message, true)
+    if (curveRequests.get(canvas) !== request) return
+    if (errorEl) errorEl.textContent = e.message
+    else setMessage(e.message, true)
   }
 }
 
@@ -421,6 +453,7 @@ function buildManagementPage() {
 
   const table = buildPolarTable({ actions: true })
   stored.body.appendChild(table)
+  stored.body.appendChild(warningsSection(polars.filter(polar => polar.error).map(polar => `${polar.id}: ${polar.error}`)))
 
   table.addEventListener('click', async (event) => {
     const toggle = event.target.closest('[data-dropdown-toggle]')
@@ -432,7 +465,7 @@ function buildManagementPage() {
       if (!isOpen) menu.classList.add('show')
       return
     }
-    if (event.target.closest('.dropdown-item')) {
+    if (event.target.closest('a.dropdown-item')) {
       table.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'))
       return
     }
@@ -440,6 +473,10 @@ function buildManagementPage() {
     if (!target) return
     const { action, id } = target.dataset
     try {
+      if (action === 'preview') {
+        await showPolarTables(polarById(id))
+        return
+      }
       if (action === 'modify') {
         showModifyPolar(polarById(id))
         return
@@ -453,6 +490,103 @@ function buildManagementPage() {
   })
 
   return wrap
+}
+
+async function showPolarTables(polar) {
+  const documentBody = await api(`polars/${encodeURIComponent(polar.id)}`)
+  const v2 = documentBody.kind === 'polarSet'
+  const choices = v2
+    ? [{ name: 'Best performance', table: documentBody.best }, ...(documentBody.sailplans || [])]
+    : [{ name: 'Polar table', table: documentBody }]
+  const view = cardEl('Polar tables')
+  view.body.innerHTML = `
+    <p class="small text-muted">Document: ${escapeHtml(documentBody.name || polar.id)} (${escapeHtml(documentBody.schemaVersion)}).
+      Table selection is local to this view; the active-polar pointer is unchanged.</p>
+    <label for="viewTable">Display / export table</label>
+    <select id="viewTable" class="form-select form-select-sm mb-2">
+      ${choices.map((choice, index) => `<option value="${index}">${escapeHtml(choice.name)}</option>`).join('')}
+    </select>
+    <div class="row"><div class="col-md-5 col-lg-4"><canvas class="polar-canvas"></canvas></div></div>
+    <div data-curve-error class="text-danger small" role="status"></div>
+    <div data-table></div>
+    <h5 class="mt-3">Export</h5>
+    <a class="btn btn-secondary btn-sm mb-2" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/json" download>Complete canonical document (lossless)</a>
+    <p class="small">Selected-table exports are projections, not complete-document exports.
+      ${v2 ? 'They omit other tables, sail descriptions, wave correction, heel/reef/flat and winning references. Root boat metadata is retained where the format supports it; it does not describe the selected sailplan.' : ''}
+      Text formats round numbers and may lose target details. Missing speeds are rejected, never replaced with zero.</p>
+    <select data-export-format class="form-select form-select-sm mb-2" aria-label="Selected-table export format">
+      <option value="expedition">Expedition text</option>
+      <option value="jieter">Jieter text</option>
+      <option value="json-v1">Canonical v1 table${v2 ? ' (lossy projection)' : ''}</option>
+    </select>
+    <label><input type="checkbox" data-ack-loss> I accept the selected-table projection and information loss.</label>
+    <div><button class="btn btn-primary btn-sm" data-export-table>Export selected table</button>
+      <button class="btn btn-secondary btn-sm" data-close-view>Close</button></div>
+    <p data-export-error class="text-danger small mt-2" role="alert"></p>
+  `
+  const select = view.body.querySelector('#viewTable')
+  const canvas = new window.PolarCanvas(view.body.querySelector('canvas'))
+  let generation = 0
+  const render = async () => {
+    const current = ++generation
+    const choice = choices[Number(select.value)]
+    const table = choice.table
+    const number = (value, factor = 1, digits = 2) => value === null || value === undefined ? '-' : (value * factor).toFixed(digits)
+    const knots = 3600 / 1852
+    const degrees = 180 / Math.PI
+    const quantities = [['boatSpeedMatrix', 'Boat speed (kn)', knots], ['heelMatrix', 'Heel (deg)', degrees], ['reefMatrix', 'Reef factor', 1], ['flatMatrix', 'Flat factor', 1]]
+    view.body.querySelector('[data-table]').innerHTML = `
+      ${choice.sails ? `<p class="small">${choice.sails.map(sail => escapeHtml(`${sail.name}${sail.sourceId ? ` / source ${sail.sourceId}` : ''}${sail.area ? ` / ${sail.area} m2` : ''}`)).join('; ')}</p>` : ''}
+      ${quantities.filter(([key]) => table.values[key]).map(([key, title, factor]) => `
+        <h6 class="mt-3">${title}</h6><div class="table-responsive"><table class="table table-sm">
+        <thead><tr><th>TWS (kn) / TWA (deg)</th>${table.axes.twa.map(twa => `<th>${number(twa, degrees, 1)}</th>`).join('')}</tr></thead>
+        <tbody>${table.axes.tws.map((tws, row) => `<tr><th>${number(tws, knots)}</th>${table.values[key][row].map(value => `<td>${number(value, factor, key === 'reefMatrix' || key === 'flatMatrix' ? 4 : 2)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`).join('')}
+      <h6>Supplied targets (not recalculated from the grid)</h6>
+      <div class="table-responsive"><table class="table table-sm"><thead><tr><th>TWS (kn)</th><th>Role</th><th>TWA (deg)</th><th>Speed (kn)</th><th>VMG magnitude (kn)</th><th>Heel (deg)</th><th>Reef</th><th>Flat</th></tr></thead>
+      <tbody>${(table.derived?.rows || []).flatMap(row => ['beat', 'run'].map(role => {
+        const target = row[role]
+        return `<tr><th>${number(row.tws, knots)}</th><td>${role}</td><td>${number(target?.twa, degrees)}</td><td>${number(target?.tbs, knots)}</td><td>${number(target?.vmg, knots)}</td><td>${number(target?.heel, degrees)}</td><td>${number(target?.reef, 1, 4)}</td><td>${number(target?.flat, 1, 4)}</td></tr>`
+      })).join('')}</tbody></table></div>`
+    const errorEl = view.body.querySelector('[data-curve-error]')
+    errorEl.textContent = ''
+    canvas.loadCurves({ curves: [] })
+    try {
+      const selection = choice.id === undefined ? '' : `&sailplanId=${encodeURIComponent(choice.id)}`
+      const result = await api(`polars/${encodeURIComponent(polar.id)}/curves?step=5${selection}`)
+      if (current === generation) canvas.loadCurves(result)
+    } catch (error) {
+      if (current === generation) errorEl.textContent = error.message
+    }
+  }
+  select.addEventListener('change', render)
+  view.body.querySelector('[data-export-table]').addEventListener('click', async () => {
+    const errorEl = view.body.querySelector('[data-export-error]')
+    errorEl.textContent = ''
+    if (!view.body.querySelector('[data-ack-loss]').checked) {
+      errorEl.textContent = 'Acknowledge the selected-table projection before exporting.'
+      return
+    }
+    const format = view.body.querySelector('[data-export-format]').value
+    const choice = choices[Number(select.value)]
+    const query = new URLSearchParams({ scope: 'table', acknowledgeLoss: 'true' })
+    if (choice.id !== undefined) query.set('sailplanId', choice.id)
+    try {
+      const text = await api(`polars/${encodeURIComponent(polar.id)}/export/${format}?${query}`)
+      const blob = new Blob([typeof text === 'string' ? text : JSON.stringify(text, null, 2)], { type: format === 'json-v1' ? 'application/json' : 'text/plain' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${polar.id}-${Number(select.value)}.${format === 'json-v1' ? 'json' : 'txt'}`
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (error) {
+      errorEl.textContent = error.message
+    }
+  })
+  view.body.querySelector('[data-close-view]').addEventListener('click', () => rerender())
+  document.getElementById('card-body').replaceChildren(view.card)
+  observeCanvasSize(view.body.querySelector('canvas'), canvas)
+  await render()
 }
 
 function showModifyPolar(polar) {
@@ -556,7 +690,7 @@ function buildImportPage() {
     <div class="form-group mb-2">
       <label>File</label>
       <input type="file" id="fileImportFile" class="form-control form-control-sm">
-      <div class="form-text small text-muted">Canonical JSON, Jieter, Expedition or TimeZero Wind_Polar.xml — the format is detected automatically.</div>
+      <div class="form-text small text-muted">Canonical v1/v2 JSON, Jieter, Expedition, TimeZero Wind_Polar.xml or ORC speed-guide HTML — detected automatically. ORC HTML imports v2; exact 0.01-knot ORC placeholders become unavailable, not real targets.</div>
     </div>
   `
   fileCard.body.appendChild(fileFormWrap)
@@ -590,7 +724,7 @@ function buildImportPage() {
     <div class="form-group mb-2">
       <label>Text</label>
       <textarea id="textImportText" class="form-control form-control-sm" rows="6"></textarea>
-      <div class="form-text small text-muted">Canonical JSON, Jieter, Expedition or TimeZero Wind_Polar.xml — the format is detected automatically.</div>
+      <div class="form-text small text-muted">Canonical v1/v2 JSON, Jieter, Expedition, TimeZero Wind_Polar.xml or ORC speed-guide HTML — detected automatically. Standalone SYLK is not supported.</div>
     </div>
   `
   textCard.body.appendChild(textFormWrap)

@@ -3,7 +3,7 @@
   "info": {
     "title": "Polar Management Plugin API",
     "version": "1.0.0",
-    "description": "REST API for storing, importing, exporting and selecting canonical polar tables.\nAll speed values are in m/s, all angles in radians (polar-format canonical units).\nThe same 'polars' resource type is also exposed via the standard Signal K Resource Provider API at /signalk/v2/api/resources/polars/<id>; that API is preferred for consumers that only need CRUD. This document also covers plugin-owned endpoints (import, export, validation, active-polar/performance-factor selection) with no Resource Provider equivalent.\nThe /polars/{id}/curves endpoint used by this plugin's own webapp to render the selected polar is intentionally not part of this contract.",
+    "description": "REST API for canonical v1 polarTable and v2 polarSet resources. Versions and all nested information are preserved; no automatic migration.\nAll speed values are in m/s, all angles in radians. V2 root units/symmetry and optional vessel-wide wave correction apply to independently gridded best and descriptive sailplan tables. Inventory ownership is outside this API.\nThe same 'polars' resource type is exposed via /signalk/v2/api/resources/polars/<id>, preferred for CRUD consumers.\nThe internal /polars/{id}/curves webapp endpoint is intentionally not part of this contract. V2 curves require compatible polar-math and return explicit 503 with published 1.1.1; numeric display/storage/import/export work independently. All active-polar consumers must support v2 before activation.",
     "x-route-access": "Signal K read-only users can access GET /polars, /polars/{id}, /polars/{id}/curves, /polars/{id}/validate, /internet, /activePolar, /performanceFactor, /imports/formats, /imports/sources, /exports/formats, /polars/{id}/export/{format}. External-source searches and all mutation routes require administrator access. Anonymous access follows the server's security configuration."
   },
   "servers": [
@@ -27,16 +27,20 @@
           "year": { "type": "integer" },
           "source": { "type": "string" },
           "notes": { "type": "string" },
+          "kind": { "type": "string", "enum": ["polarSet"] },
+          "schemaVersion": { "type": "string" },
+          "tables": { "type": "array", "description": "V2 local display/export choices; absent id means best, supplied id is document-local.", "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" } }, "required": ["name"] } },
+          "error": { "type": "string", "description": "Explicit storage read error, if the document could not be summarized." },
           "hasDerived": { "type": "boolean" }
         },
         "required": ["id"]
       },
       "CanonicalPolarResource": {
         "type": "object",
-        "description": "polar-format canonical polarTable document. See the polar-format package schema for the full contract.",
+        "description": "Canonical polar-format v1 polarTable or v2 polarSet. Root descriptive metadata/context is not embedded table metadata. Full structural and semantic validation uses polar-format 2. See its schemas for all optional auxiliary, target, attribution and wave data; this API outline is not a substitute for that validation.",
         "properties": {
-          "kind": { "type": "string", "enum": ["polarTable"] },
-          "schemaVersion": { "type": "string" },
+          "kind": { "type": "string", "enum": ["polarTable", "polarSet"] },
+          "schemaVersion": { "type": "string", "enum": ["1.0.0", "2.0.0"] },
           "name": { "type": "string" },
           "boatType": { "type": "string" },
           "sailnumber": { "type": "string" },
@@ -47,9 +51,16 @@
           "symmetry": { "type": "object" },
           "axes": { "type": "object" },
           "values": { "type": "object" },
-          "derived": { "type": "object" }
+          "derived": { "type": "object" },
+          "best": { "type": "object", "description": "V2 required embedded table with own axes/values/derived; supplied envelope is authoritative." },
+          "sailplans": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "sails": { "type": "array", "items": { "type": "object" } }, "notes": { "type": "string" }, "table": { "type": "object" } }, "required": ["id", "name", "table"] } },
+          "waveCorrection": { "type": "object" }
         },
-        "required": ["kind", "schemaVersion", "units", "symmetry", "axes", "values"]
+        "required": ["kind", "schemaVersion", "units", "symmetry"],
+        "oneOf": [
+          { "properties": { "kind": { "enum": ["polarTable"] }, "schemaVersion": { "enum": ["1.0.0"] } }, "required": ["axes", "values"] },
+          { "properties": { "kind": { "enum": ["polarSet"] }, "schemaVersion": { "enum": ["2.0.0"] } }, "required": ["best"] }
+        ]
       },
       "ValidationResult": {
         "type": "object",
@@ -226,10 +237,14 @@
     "/polars/{id}/export/{format}": {
       "get": {
         "operationId": "exportPolar",
-        "summary": "Export a stored polar as json, jieter or expedition text",
+        "summary": "Export a complete canonical document, or an explicitly selected single-table projection",
+        "description": "json preserves the version and every field, including nulls, auxiliary/target data, references and wave correction; table selection is incompatible. V2 single-table formats require scope=table and acknowledgeLoss=true, and default to best when sailplanId is omitted. They discard other tables, sail descriptions, wave correction, auxiliary data and winning references. json-v1 is an explicitly lossy v1 projection, not lossless canonical v2 export. Root boat metadata remains root context. Text formats additionally round numbers and may lose target details. Missing speeds are rejected, never filled. Legacy v1 exports remain available without new acknowledgment.",
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "format", "in": "path", "required": true, "schema": { "type": "string", "enum": ["json", "jieter", "expedition"] } }
+          { "name": "format", "in": "path", "required": true, "schema": { "type": "string", "enum": ["json", "json-v1", "jieter", "expedition"] } },
+          { "name": "scope", "in": "query", "schema": { "type": "string", "enum": ["table"] }, "description": "Required for v2 single-table projection; forbidden for complete json." },
+          { "name": "sailplanId", "in": "query", "schema": { "type": "string", "minLength": 1 }, "description": "Select v2 document-local sailplan. Omit for best. Unknown IDs are errors, not fallbacks. Forbidden for complete json and v1 documents." },
+          { "name": "acknowledgeLoss", "in": "query", "schema": { "type": "boolean" }, "description": "Must be true for any v2 single-table projection." }
         ],
         "responses": {
           "200": { "description": "Exported file, returned as an attachment", "content": { "application/json": {}, "text/plain": {} } },
@@ -265,13 +280,16 @@
       },
       "put": {
         "operationId": "setActivePolar",
-        "summary": "Set the active polar id; publishes vessels.self.polars.activePolar for use by other plugins",
+        "summary": "Set the active document id; publishes the unchanged vessels.self.polars.activePolar resource pointer",
+        "description": "Selects a complete document, never a local display/export sailplan. V2 requires acknowledgeV2=true after ensuring every active-polar consumer supports v2. No capability detection or shared active-sailplan path is provided.",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "nullable": true } } } } }
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "nullable": true }, "acknowledgeV2": { "type": "boolean" } } } } }
         },
         "responses": {
           "200": { "description": "Active polar set", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "nullable": true } } } } } },
+          "400": { "description": "Invalid id or document", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "V2 consumer-rollout acknowledgment required", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "404": { "description": "Polar not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
@@ -310,6 +328,7 @@
       "post": {
         "operationId": "importText",
         "summary": "Import a polar from pasted/uploaded text in a given format",
+        "description": "Use auto for automatic detection, including ORC speed-guide HTML (orc-speed-guide), canonical v1/v2 JSON, Jieter, Expedition and TimeZero wind XML. Existing vendor importers still produce v1; canonical import preserves the version. ORC HTML produces v2, reads inert numeric tables and optional embedded scalar SYLK (no standalone SYLK import), preserves independent source targets and normalizes exact ORC 0.01-knot placeholders to null speed/auxiliary cells with placeholder targets omitted. Real zero and other low speeds remain numeric. Malformed/conflicting embedded data is rejected, AWS/AWA are omitted.",
         "parameters": [{ "name": "format", "in": "path", "required": true, "schema": { "type": "string" } }],
         "requestBody": {
           "required": true,

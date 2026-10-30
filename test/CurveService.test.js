@@ -1,8 +1,9 @@
 'use strict'
 
-const { describe, it } = require('node:test')
+const { describe, it, mock } = require('node:test')
 const assert = require('node:assert/strict')
 const { buildCurves } = require('../lib/CurveService')
+const { Polar } = require('polar-math')
 
 const KNOTS = 1 / 1.94384
 const radians = degrees => degrees * Math.PI / 180
@@ -36,20 +37,35 @@ describe('CurveService.buildCurves', () => {
     assert.ok(normal.run)
 
     assert.ok(sparse.points.length > 1)
-    assert.equal(sparse.beat, null)
+    const target = Polar.fromTable(SPARSE_TABLE).targetsAt({ tws: SPARSE_TABLE.axes.tws[1] }).value?.beat
+    // Released math treats these legacy zeros as missing; v2 math keeps numeric zero.
+    assert.deepEqual(sparse.beat, target ? { twa: target.twa, tbs: target.speed } : null)
     assert.ok(sparse.run)
   })
 
-  it('does not throw when a curve has no target markers', () => {
+  it('does not throw when math returns no target markers', () => {
     const table = {
       ...SPARSE_TABLE,
       values: { boatSpeedMatrix: [SPARSE_TABLE.values.boatSpeedMatrix[1], SPARSE_TABLE.values.boatSpeedMatrix[1]] }
     }
-    assert.doesNotThrow(() => buildCurves(table))
-    const { curves } = buildCurves(table)
-    for (const curve of curves) {
-      assert.equal(curve.beat, null)
-      assert.ok(curve.run)
+    const prepare = Polar.fromTable.bind(Polar)
+    const stub = mock.method(Polar, 'fromTable', input => {
+      const polar = prepare(input)
+      return {
+        rangeAt: query => polar.rangeAt(query),
+        speedAt: query => polar.speedAt(query),
+        targetsAt: () => ({ value: { beat: null, run: null } })
+      }
+    })
+    try {
+      const { curves } = buildCurves(table)
+      assert.equal(curves.length, 2)
+      for (const curve of curves) {
+        assert.equal(curve.beat, null)
+        assert.equal(curve.run, null)
+      }
+    } finally {
+      stub.mock.restore()
     }
   })
 })

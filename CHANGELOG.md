@@ -4,9 +4,15 @@
 
 ### Added
 - Other Signal K plugins can calculate speeds, VMG, targets and sailing ranges directly using live polar handles. Active handles follow the vessel's current polar and performance factor automatically; specific-polar handles support independent performance assumptions and optional change notifications.
+- Canonical v2 validation, non-destructive storage/import/metadata editing and complete-document JSON export, alongside unchanged v1 resources and legacy importer output defaults.
+- Automatically detected ORC speed-guide HTML import to v2, using embedded high-precision numeric data when present and visible-table fallback otherwise. Preserves independent best/sailplan targets, heel/reef/flat and minimal sail descriptions; exact source 0.01-knot placeholders become unavailable, not real targets.
+- Local best/sailplan table display and curve selection, plus explicitly acknowledged selected-table exports (Expedition, Jieter or lossy canonical v1 projection). Incompatible missing speeds are rejected rather than filled.
+- Explicit v2 active-document acknowledgment to protect consumer rollout; the active-pointer shape is unchanged and no shared sailplan selection is introduced.
 
 ### Changed
 - Prepare calculation data only for the active polar and specifically requested polars, avoiding startup work and memory use for unused stored tables.
+- Use published `polar-format` 2 for both document versions. No automatic migration or package version change.
+- V2 curves use the agreed `Polar.fromPolarSet` API when available. Published `polar-math` 1.1.1 remains pinned by the existing dependency range and cannot render v2: return an explicit 503 until a compatible release is selected. Integration verification uses an isolated immutable unreleased math commit, not a local link or production dependency.
 
 ## 1.4.0 - 2026-10-29
 
