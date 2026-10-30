@@ -74,6 +74,15 @@ describe('canonical v1/v2 document boundary', () => {
     assert.throws(() => service.importText('auto', { content: JSON.stringify(bad) }), /schemaVersion/)
   })
 
+  it('surfaces corrupt stored JSON in summaries without deleting or rewriting it', () => {
+    const file = path.join(directory, 'broken.json')
+    fs.writeFileSync(file, '{')
+    const [summary] = store.listWithMeta()
+    assert.equal(summary.id, 'broken')
+    assert.match(summary.error, /JSON|property|position/i)
+    assert.equal(fs.readFileSync(file, 'utf8'), '{')
+  })
+
   it('selects only the requested table and rejects unknown IDs, including reserved-looking IDs', () => {
     const document = polarSet()
     document.sailplans[0].id = 'best'

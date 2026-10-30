@@ -70,6 +70,12 @@ no such fields.
 HTML is limited to 8 MiB before parsing. Signal K's JSON upload limit also
 applies (normally 10 MB, configurable by the server's `FILEUPLOADSIZELIMIT`);
 the JSON request may be larger than the original file because of escaping.
+The recognized ORC profile uses English Best Performance, Headsail (`Jib`) and
+Symmetric spinnaker (`Sym`) groups with the documented numeric columns.
+Each group supplies its own wind/angle grid and point counts; these are not
+hardcoded to the reference guide's eight winds and twelve reach angles.
+Unrecognized sail families, localized/alternate layouts, and non-scalar or
+formula-bearing embedded SYLK are rejected explicitly, never partly imported.
 
 Best performance is authoritative, not reconstructed from sailplan maxima.
 Each table retains its own supplied beat/run angles, speed, nonnegative VMG

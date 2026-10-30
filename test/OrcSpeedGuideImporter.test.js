@@ -13,13 +13,18 @@ const PolarStore = require('../lib/PolarStore')
 
 const TWS_KNOTS = [6, 8, 10, 12, 14, 16, 20, 24]
 const REACH_ANGLES = [52, 60, 70, 75, 80, 90, 110, 120, 135, 150, 165, 180]
+const DEFAULT_DATASET_SPECS = [
+  { tws: TWS_KNOTS, angles: REACH_ANGLES },
+  { tws: TWS_KNOTS, angles: REACH_ANGLES },
+  { tws: TWS_KNOTS, angles: REACH_ANGLES }
+]
 const DATASETS = [
   { key: 'BestPerf', title: 'Best Performance' },
   { key: 'Jib', title: 'Headsail' },
   { key: 'Sym', title: 'Symmetric spinnaker' }
 ]
 
-function pointFor(datasetIndex, windIndex, condition, twaDeg, reachIndex = 0) {
+function pointFor(datasetIndex, twsKnots, windIndex, condition, twaDeg, reachIndex = 0) {
   let btvKnots
   if (condition === 'beat') {
     btvKnots = datasetIndex === 2 ? 0.01 : 4 + datasetIndex + windIndex * 0.1
@@ -29,11 +34,11 @@ function pointFor(datasetIndex, windIndex, condition, twaDeg, reachIndex = 0) {
     btvKnots = 2 + datasetIndex + windIndex * 0.2 + reachIndex * 0.05
   }
 
-  if (datasetIndex === 0 && windIndex === 0 && condition === 'reach' && twaDeg === 52) btvKnots = 0.009
-  if (datasetIndex === 0 && windIndex === 0 && condition === 'reach' && twaDeg === 70) btvKnots = 0
+  if (datasetIndex === 0 && twsKnots === 6 && condition === 'reach' && twaDeg === 52) btvKnots = 0.009
+  if (datasetIndex === 0 && twsKnots === 6 && condition === 'reach' && twaDeg === 70) btvKnots = 0
   if (datasetIndex === 2 && condition === 'reach' &&
     (twaDeg === 52 || (windIndex >= 6 && twaDeg === 60) ||
-      (windIndex === 7 && [70, 75, 80].includes(twaDeg)))) {
+      (twsKnots === 24 && [70, 75, 80].includes(twaDeg)))) {
     btvKnots = 0.01
   }
 
@@ -45,8 +50,9 @@ function pointFor(datasetIndex, windIndex, condition, twaDeg, reachIndex = 0) {
   return {
     sail: DATASETS[datasetIndex].key,
     id: datasetIndex === 0 ? '' : datasetIndex === 1 ? '2024 J1' : '2024',
-    twsKnots: TWS_KNOTS[windIndex],
+    twsKnots,
     condition,
+    role: condition === 'beat' ? 'optup' : condition === 'run' ? 'optdn' : 'no',
     twaDeg,
     btvKnots,
     vmgKnots,
@@ -58,16 +64,17 @@ function pointFor(datasetIndex, windIndex, condition, twaDeg, reachIndex = 0) {
   }
 }
 
-function makeRows() {
+function makeRows(datasetSpecs = DEFAULT_DATASET_SPECS) {
   return DATASETS.map((dataset, datasetIndex) => ({
     ...dataset,
-    tables: TWS_KNOTS.map((tws, windIndex) => {
+    tables: datasetSpecs[datasetIndex].tws.map((tws, windIndex) => {
+      const angles = datasetSpecs[datasetIndex].angles
       const points = [
-        pointFor(datasetIndex, windIndex, 'beat', datasetIndex === 2 ? 48 + windIndex * 0.1 : 42 + windIndex * 0.1),
-        ...REACH_ANGLES.map((angle, reachIndex) => (
-          pointFor(datasetIndex, windIndex, 'reach', angle, reachIndex)
+        pointFor(datasetIndex, tws, windIndex, 'beat', datasetIndex === 2 ? 48 + windIndex * 0.1 : 42 + windIndex * 0.1),
+        ...angles.map((angle, reachIndex) => (
+          pointFor(datasetIndex, tws, windIndex, 'reach', angle, reachIndex)
         )),
-        pointFor(datasetIndex, windIndex, 'run', 160 + windIndex * 0.2)
+        pointFor(datasetIndex, tws, windIndex, 'run', 160 + windIndex * 0.2)
       ]
       return { twsKnots: tws, points }
     })
@@ -117,17 +124,17 @@ function makeSylk(rows) {
 
 const SYLK_HEADERS = ['Sail', 'Id', 'TWS', 'Condition', 'TWA', 'BTV', 'VMG', 'AWS', 'AWA', 'Heel', 'Reef', 'Flat']
 
-function makeGuide({ embedded = true, conflict = false } = {}) {
-  const rows = makeRows()
+function makeGuide({ embedded = true, conflict = false, datasetSpecs = DEFAULT_DATASET_SPECS } = {}) {
+  const rows = makeRows(datasetSpecs)
   const sections = rows.map((dataset, datasetIndex) => {
-    return dataset.tables.map((table, windIndex) => {
+    const tables = dataset.tables.map((table, windIndex) => {
       const tableRows = table.points
         .map(point => ({ ...point }))
         .sort((left, right) => left.twaDeg - right.twaDeg)
         .map((point, pointIndex) => {
           let btv = formatVisible(point.btvKnots, 2)
           if (conflict && datasetIndex === 0 && windIndex === 0 && pointIndex === 0) btv = '9.99'
-          return `<tr><td>${formatVisible(point.twaDeg, 1)}°</td><td>${btv}</td>` +
+          return `<tr vmg="${point.role}"><td>${formatVisible(point.twaDeg, 1)}°</td><td>${btv}</td>` +
             `<td>${formatVisible(Math.abs(point.vmgKnots), 2)}</td><td>${formatVisible(point.awsKnots, 2)}</td>` +
             `<td>${formatVisible(point.awaDeg, 1)}°</td><td>${formatVisible(point.heelDeg, 1)}°</td>` +
             `<td>${formatVisible(point.reef, 2)}</td><td>${formatVisible(point.flat, 2)}</td></tr>`
@@ -135,13 +142,20 @@ function makeGuide({ embedded = true, conflict = false } = {}) {
       return `<table class="polartable"><caption>TWS = ${table.twsKnots}kts</caption>` +
         `<tr>${SYLK_HEADERS.slice(4).map(header => `<th>${header}</th>`).join('')}</tr>${tableRows}</table>`
     }).join('')
+    if (datasetIndex === 0) {
+      return `<div class="polarcontainer-title"><div>Komeet<br>NED 5436<br>stadt 34<br>` +
+        `<span>Best Performance</span></div></div>${tables}`
+    }
+    const sail = datasetIndex === 1
+      ? 'Headsail, 33.01 m² (id = 2024 J1)'
+      : 'Symmetric, 63.25 m² (id = 2024)'
+    return `<div class="polarcontainer-title"><div>Komeet<br>NED 5436<br>stadt 34<br>${sail}</div></div>${tables}`
   }).join('')
 
   const fileLink = embedded
     ? `<a download="guide.slk" href="data:application/octet-stream;base64,${Buffer.from(makeSylk(rows)).toString('base64')}">SYLK</a>`
     : ''
   return `<html><body>
-    <div class="polarcontainer-title"><div>Komeet<br>NED 5436<br>stadt 34<br><span>Best Performance</span></div></div>
     <div>Headsail, 33.01 m² (id = 2024 J1)</div>
     <div>Symmetric, 63.25 m² (id = 2024)</div>
     <footer>© Offshore Racing Congress 2024</footer>
@@ -290,7 +304,7 @@ describe('OrcSpeedGuideImporter', () => {
       ['unsupported record', text => text.replace('\r\nE', '\r\nF;Y1;X1;K1\r\nE'), /unsupported non-scalar records/i],
       ['unknown dataset', text => text.replace('C;Y2;X1;K"BestPerf"', 'C;Y2;X1;K"Unknown"'), /unrecognized sail table/i],
       ['conflicting sail identifier', text => text.replace('C;Y114;X2;K"2024 J1"', 'C;Y114;X2;K"Other"'), /conflicting sail identifiers/i],
-      ['conflicting TWS grid', text => text.replace('C;Y2;X3;K6', 'C;Y2;X3;K8'), /12 reaches/i]
+      ['conflicting TWS grid', text => text.replace('C;Y2;X3;K6', 'C;Y2;X3;K8'), /reaches and one beat\/run target/i]
     ]) {
       assert.throws(() => new OrcSpeedGuideImporter().parse(mutateEmbeddedSylk(guide, mutate)), message, label)
     }
@@ -310,8 +324,45 @@ describe('OrcSpeedGuideImporter', () => {
     const firstTable = visibleOnly.match(/<table\b[\s\S]*?<\/table>/i)[0]
     assert.throws(
       () => new OrcSpeedGuideImporter().parse(visibleOnly.replace('</body>', `${firstTable}</body>`)),
-      /Expected 24 ORC speed-guide tables; found 25/i
+      /duplicate visible TWS tables/i
     )
+  })
+
+  it('derives independent dataset TWS and TWA grids from variable-size source and visible records', () => {
+    const datasetSpecs = [
+      { tws: [5, 9, 15], angles: [52, 70, 100, 150] },
+      { tws: [6, 12], angles: [55, 90, 125] },
+      { tws: [7, 11, 17, 23], angles: [58, 75, 95, 130, 165] }
+    ]
+
+    for (const embedded of [true, false]) {
+      const { resource } = new OrcSpeedGuideImporter().parse(makeGuide({ embedded, datasetSpecs }))
+      assert.equal(validatePolar(resource).valid, true)
+      const [best, headsail, symmetric] = [resource.best, ...resource.sailplans.map(plan => plan.table)]
+      const degrees = table => table.axes.twa.map(value => Number(SI.toDegrees(value).toFixed(8)))
+      const knots = table => table.axes.tws.map(value => Number(SI.toKnots(value).toFixed(8)))
+      assert.deepEqual(knots(best), datasetSpecs[0].tws)
+      assert.deepEqual(degrees(best), datasetSpecs[0].angles)
+      assert.deepEqual(knots(headsail), datasetSpecs[1].tws)
+      assert.deepEqual(degrees(headsail), datasetSpecs[1].angles)
+      assert.deepEqual(knots(symmetric), datasetSpecs[2].tws)
+      assert.deepEqual(degrees(symmetric), datasetSpecs[2].angles)
+      assert.deepEqual(
+        [best, headsail, symmetric].map(table => [
+          table.values.boatSpeedMatrix.length,
+          table.values.boatSpeedMatrix[0].length
+        ]),
+        [[3, 4], [2, 3], [4, 5]]
+      )
+      assert.deepEqual(
+        [best, headsail, symmetric].map(table => [
+          table.derived.rows.length,
+          table.derived.rows.filter(row => row.beat).length,
+          table.derived.rows.filter(row => row.run).length
+        ]),
+        [[3, 3, 3], [2, 2, 2], [4, 0, 4]]
+      )
+    }
   })
 
   it('enforces HTML and embedded-SYLK size bounds', () => {
