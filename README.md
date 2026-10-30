@@ -29,7 +29,8 @@ root boat metadata and wave context are not embedded-table metadata.
 
 The production dependency remains the published `polar-math` 1.1.1. It cannot
 prepare v2 curves. Until a compatible math release is selected, v2 curve
-requests explicitly return **503** and the UI displays the error; storage,
+requests explicitly return **503** and in-process handles return
+`value: null` / `state.reason: "unsupported_math"` with a plugin error; storage,
 numeric table display, metadata editing, import and export remain available.
 There is no synthetic v1 math wrapper or silent fallback to a different table.
 Integration can be verified separately against immutable unreleased
@@ -46,6 +47,9 @@ support v2. The UI requires confirmation; the activation API requires
 `{ "id": "...", "acknowledgeV2": true }`. This acknowledgment is not automatic
 consumer capability detection. Existing v1 activation and persisted active
 selection behavior are unchanged. The performance plugin is not modified here.
+Existing in-process handles always prepare a v2 document's **best** table;
+they never inherit the UI's local sailplan selection. Their lifecycle, factors,
+caching and change-notification contract are unchanged.
 
 ## Import an ORC speed-guide HTML file
 
@@ -102,6 +106,16 @@ table-selection parameters. For a v2 projection use
 and optionally `&sailplanId=<document-local-id>`; omit the ID for best. Unknown
 IDs are errors, never best-table fallbacks. All routes have the
 `/plugins/signalk-polar-management` prefix.
+
+### Verification
+
+Run `npm test` for synthetic importer and v1/v2 storage, API, lifecycle and
+export regression tests. To additionally verify the private local ORC reference
+without copying it into the repository, set `ORC_SPEED_GUIDE_HTML` to its HTML
+file path before running the suite. That opt-in test checks all 336 source
+points, conversions, independent targets and confirmed placeholders, then tests
+round trips and every selected table. It also checks v2 curves when compatible
+math is installed; otherwise it verifies the explicit readiness error.
 
 ## HTTP endpoint access
 

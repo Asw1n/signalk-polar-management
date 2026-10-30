@@ -13,6 +13,11 @@ The service contract has `apiVersion: 1`.
 - `service.polar(id, { performanceFactor: 0.85 })` uses that explicit factor instead.
   It replaces, rather than multiplies, the shared factor. The factor must be a
   finite non-negative number; unlike the shared setting, it may exceed 1.
+- Canonical v1 documents keep their table behavior. V2 documents select `best`
+  using `Polar.fromPolarSet`; existing handles do not select a sailplan. Local
+  display/export table choices never change a handle or the shared active pointer.
+  Complete root context, including wave correction, is passed to math, not
+  flattened into a synthetic v1 table.
 - Table edits are reflected on the next calculation call, including calls on
   already-retained handles. A specific handle stays bound to its ID: it does not
   follow a rename. If the ID is recreated, the same handle uses the new table.
@@ -130,12 +135,23 @@ Provider-level unavailability returns:
 }
 ```
 
-Reasons are `no_active_polar`, `polar_not_found`, `invalid_polar` and
+Reasons are `no_active_polar`, `polar_not_found`, `invalid_polar`,
+`unsupported_math` and
 `provider_stopped`. An invalid/unreadable table is reported through the plugin's
 error status when preparation fails, and does not fall back to an old table.
 Other result states, including `invalid_input` and `no_data`, come from
 polar-math. Unavailable calculations do not throw. Invalid handle acquisition
 arguments and invalid subscription callbacks throw descriptive errors.
+
+Published `polar-math` 1.1.1 does not implement v2. A valid v2 resource therefore
+returns `unsupported_math` from these handles and reports a descriptive plugin
+error at preparation time, rather than claiming the resource is invalid or
+silently using v1 data. Storage, numeric table display and export are independent
+of math readiness. A compatible released math dependency is still required for
+production v2 calculations; unreleased integration verification does not enable
+them automatically. All resource/delta consumers must support v2 before a v2
+active document is acknowledged. The service remains `apiVersion: 1` with the
+same four calculation methods and unchanged result shapes.
 
 ## Change subscriptions
 

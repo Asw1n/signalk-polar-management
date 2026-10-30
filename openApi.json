@@ -120,8 +120,8 @@
         "summary": "List all stored polars with light metadata",
         "responses": {
           "200": {
-            "description": "Map of polar id to summary metadata",
-            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/PolarSummary" } } } }
+            "description": "Array of stored polar summaries, including local v2 table choices where available",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/PolarSummary" } } } }
           }
         }
       }

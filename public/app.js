@@ -387,7 +387,7 @@ function buildActivePage() {
       try {
         const v2 = polarById(event.target.dataset.id)?.kind === 'polarSet'
         if (v2 && !window.confirm('Activate this complete v2 document? All performance consumers must support polarSet v2 first. The local display table is NOT shared.')) {
-          event.target.checked = false
+          await rerender()
           return
         }
         await api('activePolar', {

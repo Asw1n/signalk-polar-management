@@ -13,6 +13,7 @@
 - Prepare calculation data only for the active polar and specifically requested polars, avoiding startup work and memory use for unused stored tables.
 - Use published `polar-format` 2 for both document versions. No automatic migration or package version change.
 - V2 curves use the agreed `Polar.fromPolarSet` API when available. Published `polar-math` 1.1.1 remains pinned by the existing dependency range and cannot render v2: return an explicit 503 until a compatible release is selected. Integration verification uses an isolated immutable unreleased math commit, not a local link or production dependency.
+- Preserve the newly merged in-process live-handle API: v2 handles prepare best without changing local table selection or pointer semantics; unsupported math returns an explicit `unsupported_math` result and plugin error.
 
 ## 1.4.0 - 2026-10-29
 

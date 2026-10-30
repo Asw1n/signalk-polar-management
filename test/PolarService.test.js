@@ -8,6 +8,7 @@ const path = require('path')
 const { Polar } = require('polar-math')
 const PolarStore = require('../lib/PolarStore')
 const PolarService = require('../lib/PolarService')
+const { polarSet } = require('./fixtures/polarSet')
 
 function table(speed = 4) {
   return {
@@ -35,6 +36,60 @@ describe('live polar service', () => {
   afterEach(() => {
     service.stop()
     fs.rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('prepares v2 best for existing live handles or explicitly reports unsupported math', (t) => {
+    const document = polarSet()
+    store.save('set', document)
+    const prepare = typeof Polar.fromPolarSet === 'function' ? t.mock.method(Polar, 'fromPolarSet') : null
+    const handle = service.api.polar('set', { performanceFactor: 0.8 })
+    if (!prepare) {
+      for (const method of ['speedAt', 'vmgAt', 'targetsAt', 'rangeAt']) {
+        assert.equal(handle[method]({ tws: 4, twa: Math.PI / 3 }).state.reason, 'unsupported_math')
+      }
+      assert.match(errors.at(-1), /Polar.fromPolarSet/)
+      store.modify('set', { id: 'set', name: 'Updated' })
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).state.reason, 'unsupported_math')
+    } else {
+      assert.equal(prepare.mock.callCount(), 1)
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 1.6)
+      const target = handle.targetsAt({ tws: 4 }).value.beat
+      assert.equal(target.heel, 0.12)
+      assert.equal(target.reef, 1.0006)
+      assert.equal(target.flat, 1)
+      const waveSpeed = handle.speedAt({
+        tws: 4, twa: Math.PI / 3,
+        seaState: { significantWaveHeight: 1, wavePeriod: 5, waveAngle: 0 }
+      }).value
+      assert.ok(Math.abs(waveSpeed - 1.28) < 1e-12)
+      const active = service.api.activePolar()
+      settings.activePolar = 'set'
+      service.notify({ type: 'selection' })
+      settings.performanceFactor = 0.5
+      assert.equal(active.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 1)
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 1.6)
+      store.modify('set', { id: 'set', name: 'Updated' })
+      assert.equal(prepare.mock.callCount(), 2)
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 1.6)
+      document.best.values.boatSpeedMatrix[0][0] = 4
+      store.save('set', document)
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 3.2)
+      assert.equal(prepare.mock.callCount(), 3)
+      assert.ok(prepare.mock.calls.every(call => call.arguments[1] === undefined))
+      assert.deepEqual(errors, [])
+    }
+    service.stop()
+    assert.equal(handle.speedAt({ tws: 4, twa: 1 }).state.reason, 'provider_stopped')
+  })
+
+  it('does not present malformed v2 documents as unsupported math or keep stale prepared data', () => {
+    const handle = service.api.polar('first')
+    const document = polarSet()
+    document.best.values.boatSpeedMatrix[0].pop()
+    fs.writeFileSync(path.join(directory, 'first.json'), JSON.stringify(document))
+    service.refresh('first')
+    assert.equal(handle.speedAt({ tws: 4, twa: 1 }).state.reason, 'invalid_polar')
+    assert.match(errors.at(-1), /Cannot prepare polar/)
   })
 
   it('prepares only the active table at startup even with 200 stored polars', (t) => {
