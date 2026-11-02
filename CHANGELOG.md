@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.0 - 2026-11-02
 
 ### Added
 - Publish the active selection's identity as plain strings for simple displays: `vessels.self.polars.boatName` (the active document's boat name, falling back to the resource id) and `vessels.self.polars.sailPlan` (the shared active sailplan's name, `best` for a v2 best selection, null for v1 documents or unusable selections). Both paths are event-driven, follow document and sailplan renames, and reset to null when no usable polar is active or the plugin stops.
