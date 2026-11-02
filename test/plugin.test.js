@@ -206,6 +206,8 @@ describe('plugin lifecycle', () => {
     assert.ok(meta.some(item => item.path === 'polars.activePolar'))
     assert.ok(meta.some(item => item.path === 'polars.performanceFactor'))
     assert.ok(meta.some(item => item.path === 'polars.applyWaveCorrection'))
+    assert.ok(meta.some(item => item.path === 'polars.boatName'))
+    assert.ok(meta.some(item => item.path === 'polars.sailPlan'))
     plugin.stop()
   })
 
@@ -359,7 +361,7 @@ describe('plugin lifecycle', () => {
           await provider.deleteResource('renamed')
           await assert.rejects(provider.getResource('renamed'), /not found/)
           assert.ok(app._messages.every(message => (message.delta.updates[0].values || []).every(value =>
-            ['polars.activePolar', 'polars.performanceFactor', 'polars.applyWaveCorrection'].includes(value.path))))
+            ['polars.activePolar', 'polars.performanceFactor', 'polars.applyWaveCorrection', 'polars.boatName', 'polars.sailPlan'].includes(value.path))))
         } finally {
           plugin.stop()
         }
@@ -411,6 +413,52 @@ describe('plugin lifecycle', () => {
           if (typeof Polar.fromPolarSet === 'function') {
             assert.equal(active.speedAt(input).value, 2)
           }
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('publishes the active boat name and sailplan name', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const identity = () => {
+            const latest = {}
+            for (const message of app._messages) {
+              for (const value of message.delta.updates[0].values || []) {
+                if (['polars.boatName', 'polars.sailPlan'].includes(value.path)) latest[value.path] = value.value
+              }
+            }
+            return [latest['polars.boatName'], latest['polars.sailPlan']]
+          }
+          assert.deepEqual(identity(), [null, null])
+          await app._registeredProviders[0].methods.setResource('set', polarSet())
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+          assert.deepEqual(identity(), ['Root boat', 'best'])
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: 'jib', acknowledgeV2: true } }).status, 200)
+          assert.deepEqual(identity(), ['Root boat', 'Headsail'])
+          assert.equal(request('PUT /polars/:id/sailplans/:sailplanId/metadata',
+            { params: { id: 'set', sailplanId: 'jib' }, body: { name: 'Genoa' } }).status, 200)
+          assert.deepEqual(identity(), ['Root boat', 'Genoa'])
+          assert.equal(request('PUT /polars/:id/metadata',
+            { params: { id: 'set' }, body: { id: 'set', name: 'Edited boat' } }).status, 200)
+          assert.deepEqual(identity(), ['Edited boat', 'Genoa'])
+          assert.equal(request('PUT /activePolar', { body: { id: null } }).status, 200)
+          assert.deepEqual(identity(), [null, null])
         } finally {
           plugin.stop()
         }

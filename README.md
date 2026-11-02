@@ -59,6 +59,14 @@ The Management page's **Open** view display/export table choices remain local
 and independent of the shared selection. Handle lifecycle, factors, caching and
 change-notification contracts are unchanged.
 
+For displays that only need labels, the plugin also publishes the active
+selection's identity as plain strings: `vessels.self.polars.boatName` carries
+the active document's boat name (the resource id when the document has no
+name) and `vessels.self.polars.sailPlan` carries the shared active sailplan's
+name — `best` for a v2 best selection, `null` for v1 documents, for an
+unusable sailplan selection, or when no usable polar is active. Both paths are
+event-driven (published on change) and reset to `null` when the plugin stops.
+
 A v2 document may carry an optional vessel-wide `waveCorrection` table. The
 shared toggle (default **on**, `GET/PUT /waveCorrection` with
 `{ "apply": true|false }`) controls whether active-polar consumers apply it:

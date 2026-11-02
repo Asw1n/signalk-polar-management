@@ -139,6 +139,35 @@ method does not override it. Consumers must not apply the shared factor again.
 Calls are synchronous and perform no filesystem access, validation or preparation.
 Neither prepared instances nor internal table data are exposed.
 
+## Handle description
+
+Both handle types also expose `describe()`: a synchronous, filesystem-free
+descriptive snapshot of the handle's current selection, for display purposes
+such as a consumer webapp's overview. It resolves exactly like the calculation
+methods — active handles mirror the shared selection per call, specific handles
+stay fixed to their acquisition choices — and returns a frozen object:
+
+```js
+{
+  available: true,
+  id,                 // storage id of the selected document
+  sailplanId,         // document-local sailplan id, or null for best / v1
+  performanceFactor,  // the factor this handle applies in calculations
+  name, boatType, sailnumber, year, source, notes, // document metadata, null when absent
+  twsAxis             // the selected table's TWS axis, canonical m/s, frozen
+}
+```
+
+`twsAxis` describes the grid of the table the handle calculates from (best or
+the selected sailplan's table), so consumers can render per-TWS curves without
+reading the resource document. Matrix data is still not exposed. Descriptions
+are rebuilt with the prepared table, so edits are reflected on the next call.
+When the handle cannot calculate, `describe()` returns
+`{ available: false, reason }` with the same reasons as the calculation
+methods. Consumers that only display metadata should prefer `describe()` over
+resource lookups and the `polars.*` paths: it already reflects the shared
+selection and needs no href or document-structure parsing.
+
 Provider-level unavailability returns:
 
 ```js

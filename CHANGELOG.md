@@ -3,7 +3,9 @@
 ## Unreleased
 
 ### Added
+- Publish the active selection's identity as plain strings for simple displays: `vessels.self.polars.boatName` (the active document's boat name, falling back to the resource id) and `vessels.self.polars.sailPlan` (the shared active sailplan's name, `best` for a v2 best selection, null for v1 documents or unusable selections). Both paths are event-driven, follow document and sailplan renames, and reset to null when no usable polar is active or the plugin stops.
 - Other Signal K plugins can calculate speeds, VMG, targets and sailing ranges directly using live polar handles. Active handles follow the vessel's current polar and performance factor automatically; specific-polar handles support independent performance assumptions and optional change notifications.
+- Live polar handles also describe their current selection (`describe()`): boat metadata, the selected sailplan, the applied performance factor and the selected table's wind-speed axis, so consumer plugins can show polar details and draw per-wind-speed curves without reading stored resources or parsing Signal K paths.
 - Canonical v2 validation, non-destructive storage/import/metadata editing and complete-document JSON export, alongside unchanged v1 resources and legacy importer output defaults.
 - Automatically detected ORC speed-guide HTML import to v2, using embedded high-precision numeric data when present and visible-table fallback otherwise. Preserves independent best/sailplan targets, heel/reef/flat and minimal sail descriptions; exact source 0.01-knot placeholders become unavailable, not real targets.
 - Local best/sailplan table display and curve selection, plus explicitly acknowledged selected-table exports (Expedition, Jieter or lossy canonical v1 projection). Incompatible missing speeds are rejected rather than filled.

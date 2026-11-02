@@ -12,6 +12,8 @@ const { buildCurves, DEFAULT_STEP_DEG } = require('./lib/CurveService')
 const ACTIVE_POLAR_PATH = 'polars.activePolar'
 const PERFORMANCE_FACTOR_PATH = 'polars.performanceFactor'
 const APPLY_WAVE_CORRECTION_PATH = 'polars.applyWaveCorrection'
+const BOAT_NAME_PATH = 'polars.boatName'
+const SAIL_PLAN_PATH = 'polars.sailPlan'
 const DEFAULT_PERFORMANCE_FACTOR = 1
 const DEFAULT_APPLY_WAVE_CORRECTION = true
 const RESOURCE_TYPE = 'polars'
@@ -25,6 +27,8 @@ module.exports = (app) => {
   let activePolarPublished = false
   let performanceFactorPublished = false
   let publishedWaveValue // undefined until first wave-correction publication
+  let publishedBoatName // undefined until first identity publication
+  let publishedSailPlan // undefined until first identity publication
 
   const plugin = {
     id: 'signalk-polar-management',
@@ -105,6 +109,26 @@ module.exports = (app) => {
               // Only emitted on change, not periodically -> exempt from stale-data timeout.
               updateContract: 'event'
             }
+          },
+          {
+            path: BOAT_NAME_PATH,
+            value: {
+              type: 'string',
+              displayName: 'Active polar boat name',
+              description: 'Boat name of the active polar document (resource id when the document has no name); null when no usable polar is active.',
+              // Only emitted on change, not periodically -> exempt from stale-data timeout.
+              updateContract: 'event'
+            }
+          },
+          {
+            path: SAIL_PLAN_PATH,
+            value: {
+              type: 'string',
+              displayName: 'Active sailplan name',
+              description: 'Name of the shared active sailplan; \'best\' for a v2 best selection, null for v1 documents, unusable selections or no active polar.',
+              // Only emitted on change, not periodically -> exempt from stale-data timeout.
+              updateContract: 'event'
+            }
           }
         ]
       }]
@@ -113,6 +137,7 @@ module.exports = (app) => {
 
   function publishActivePolar(id, sailplanId) {
     refreshApplyWaveCorrection()
+    refreshIdentity()
     const value = id
       ? { href: `/resources/${RESOURCE_TYPE}/${id}`, ...(sailplanId ? { sailplanId } : {}) }
       : null
@@ -125,6 +150,7 @@ module.exports = (app) => {
 
   function clearActivePolar() {
     refreshApplyWaveCorrection()
+    refreshIdentity()
     if (!activePolarPublished) {
       polarService?.notify({ type: 'selection' })
       return
@@ -189,6 +215,58 @@ module.exports = (app) => {
     publishedWaveValue = undefined
   }
 
+  // Human-readable identity of the active selection: the document's boat name
+  // (resource id when the document has no name) and the selected sailplan's
+  // name ('best' for a v2 best selection). Both are null when no usable polar
+  // is active; sailPlan is also null for v1 documents and for a configured
+  // sailplan that is missing from the document.
+  function identityValues() {
+    const empty = { boatName: null, sailPlan: null }
+    if (!store || !settings.activePolar || !store.exists(settings.activePolar)) return empty
+    let document
+    try {
+      document = store.get(settings.activePolar)
+    } catch (_) {
+      return empty
+    }
+    const boatName = document.name || settings.activePolar
+    if (document.kind !== 'polarSet') return { boatName, sailPlan: null }
+    if (!settings.activeSailplan) return { boatName, sailPlan: 'best' }
+    const plan = (document.sailplans || []).find(candidate => candidate.id === settings.activeSailplan)
+    return { boatName, sailPlan: plan ? plan.name || plan.id : null }
+  }
+
+  function refreshIdentity() {
+    const { boatName, sailPlan } = identityValues()
+    const values = []
+    if (boatName !== publishedBoatName) {
+      values.push({ path: BOAT_NAME_PATH, value: boatName })
+      publishedBoatName = boatName
+    }
+    if (sailPlan !== publishedSailPlan) {
+      values.push({ path: SAIL_PLAN_PATH, value: sailPlan })
+      publishedSailPlan = sailPlan
+    }
+    if (values.length) {
+      app.handleMessage(plugin.id, { updates: [{ values }] })
+    }
+  }
+
+  function clearIdentity() {
+    const values = []
+    if (publishedBoatName !== undefined && publishedBoatName !== null) {
+      values.push({ path: BOAT_NAME_PATH, value: null })
+    }
+    if (publishedSailPlan !== undefined && publishedSailPlan !== null) {
+      values.push({ path: SAIL_PLAN_PATH, value: null })
+    }
+    if (values.length) {
+      app.handleMessage(plugin.id, { updates: [{ values }] })
+    }
+    publishedBoatName = undefined
+    publishedSailPlan = undefined
+  }
+
   plugin.start = (options) => {
     if (polarService) plugin.stop()
     settings = { activePolar: '', activeSailplan: '', performanceFactor: DEFAULT_PERFORMANCE_FACTOR, applyWaveCorrection: DEFAULT_APPLY_WAVE_CORRECTION, ...options }
@@ -201,6 +279,7 @@ module.exports = (app) => {
 
     publishMetadata()
     refreshApplyWaveCorrection()
+    refreshIdentity()
     publishPerformanceFactor(settings.performanceFactor)
 
     if (settings.activePolar && store.exists(settings.activePolar)) {
@@ -228,7 +307,10 @@ module.exports = (app) => {
         },
         setResource: async (id, value) => {
           store.save(id, value)
-          if (id === settings.activePolar) refreshApplyWaveCorrection()
+          if (id === settings.activePolar) {
+            refreshApplyWaveCorrection()
+            refreshIdentity()
+          }
         },
         deleteResource: async (id) => {
           if (settings.activePolar === id) {
@@ -251,6 +333,7 @@ module.exports = (app) => {
       app.emitPropertyValue('polarManagement', { apiVersion: 1, available: false })
     }
     clearActivePolar()
+    clearIdentity()
     clearApplyWaveCorrection()
     clearPerformanceFactor()
     store = null
@@ -319,7 +402,10 @@ module.exports = (app) => {
     router.put('/polars/:id', (req, res) => {
       try {
         store.save(req.params.id, req.body)
-        if (req.params.id === settings.activePolar) refreshApplyWaveCorrection()
+        if (req.params.id === settings.activePolar) {
+          refreshApplyWaveCorrection()
+          refreshIdentity()
+        }
         res.json({ id: req.params.id })
       } catch (e) {
         res.status(400).json({ error: e.message })
@@ -352,6 +438,9 @@ module.exports = (app) => {
         return res.status(400).json({ error: e.message })
       }
       if (settings.activePolar !== oldId || newId === oldId) {
+        // A name edit that keeps the active id must still refresh the
+        // published boat name.
+        if (settings.activePolar === oldId) refreshIdentity()
         return res.json({ id: newId })
       }
       const nextSettings = { ...settings, activePolar: newId }
@@ -416,6 +505,9 @@ module.exports = (app) => {
       store.save(id, document)
       if (id === settings.activePolar) refreshApplyWaveCorrection()
       respond()
+      // After respond(): a sailplan rename updates the shared selection inside
+      // respond, so the identity refresh sees the final selection.
+      if (id === settings.activePolar) refreshIdentity()
     }
 
     router.access('readonly').get('/polars/:id/waveCorrection', (req, res) => {

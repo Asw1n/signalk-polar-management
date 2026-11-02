@@ -389,7 +389,7 @@
       },
       "put": {
         "operationId": "setActivePolar",
-        "summary": "Set the active document id and shared sailplan; publishes the vessels.self.polars.activePolar pointer",
+        "summary": "Set the active document id and shared sailplan; publishes the vessels.self.polars.activePolar pointer and the vessels.self.polars.boatName and vessels.self.polars.sailPlan display names",
         "description": "Selects a complete document and, for v2, the shared active sailplan used by every active-polar consumer. Omit sailplanId (or send null) for best; v2 selection resets to best whenever it is omitted. sailplanId must name an existing document-local sailplan and is rejected for v1 documents; unknown IDs are errors, not fallbacks. V2 requires acknowledgeV2=true after ensuring every active-polar consumer supports v2. The published pointer value is { href } plus sailplanId only when a sailplan is selected. Local display/export table choices remain independent of this shared selection. No capability detection is provided.",
         "requestBody": {
           "required": true,

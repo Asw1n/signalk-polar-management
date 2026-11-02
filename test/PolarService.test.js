@@ -250,6 +250,64 @@ describe('live polar service', () => {
     assert.deepEqual(errors, [])
   })
 
+  it('describes the current selection with metadata, sailplan, factor and TWS axis', () => {
+    const active = service.api.activePolar()
+    const description = active.describe()
+    assert.equal(description.available, true)
+    assert.equal(description.id, 'first')
+    assert.equal(description.sailplanId, null)
+    assert.equal(description.performanceFactor, 0.9)
+    assert.equal(description.name, null)
+    assert.deepEqual(description.twsAxis, [5, 10])
+    assert.ok(Object.isFrozen(description))
+    assert.ok(Object.isFrozen(description.twsAxis))
+
+    // Active descriptions mirror shared settings per call, without reacquisition
+    settings.performanceFactor = 0.5
+    assert.equal(active.describe().performanceFactor, 0.5)
+    store.modify('first', { id: 'first', name: 'Named boat' })
+    assert.equal(active.describe().name, 'Named boat')
+
+    // Specific descriptions are fixed to the handle's own choices
+    const specific = service.api.polar('second', { performanceFactor: 0.8 })
+    assert.equal(specific.describe().id, 'second')
+    assert.equal(specific.describe().performanceFactor, 0.8)
+    settings.activePolar = 'second'
+    service.notify({ type: 'selection' })
+    assert.equal(specific.describe().performanceFactor, 0.8)
+
+    // Unavailability mirrors the calculation methods' reasons
+    settings.activePolar = ''
+    assert.deepEqual({ ...active.describe() }, { available: false, reason: 'no_active_polar' })
+    settings.activePolar = 'missing'
+    service.notify({ type: 'selection' })
+    assert.equal(active.describe().reason, 'polar_not_found')
+    service.stop()
+    assert.equal(active.describe().reason, 'provider_stopped')
+    assert.equal(specific.describe().reason, 'provider_stopped')
+  })
+
+  it('describes v2 selections including the active sailplan and its table axis', () => {
+    if (typeof Polar.fromPolarSet !== 'function') return
+    store.save('set', polarSet())
+    settings.activePolar = 'set'
+    settings.activeSailplan = 'jib'
+    service.notify({ type: 'selection' })
+    const description = service.api.activePolar().describe()
+    assert.equal(description.available, true)
+    assert.equal(description.id, 'set')
+    assert.equal(description.sailplanId, 'jib')
+    assert.equal(description.name, 'Root boat')
+    assert.equal(description.boatType, 'Test')
+    assert.equal(description.sailnumber, 'NL 1')
+    assert.equal(description.year, 2024)
+    assert.equal(description.source, 'Test source')
+    assert.equal(description.notes, 'Root notes')
+    assert.deepEqual(description.twsAxis, [4, 6])
+    settings.activeSailplan = ''
+    assert.equal(service.api.activePolar().describe().sailplanId, null)
+  })
+
   it('defaults specific handles to 1 and fixes explicit factors independently of shared settings', () => {
     const raw = service.api.polar('first')
     const options = { performanceFactor: 0.8 }
