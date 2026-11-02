@@ -41,6 +41,25 @@
 /* ─── Polar management row actions ─────────────────────────────────────────── */
 .polar-actions { white-space: nowrap; text-align: right; }
 
+/* ─── Active polar selection: v2 sailplan sub-rows ─────────────────────────── */
+.polar-expand {
+  display: inline-block;
+  width: 1.2rem;
+  text-align: left;
+}
+/* Sailplan sub-rows carry their radio inside the indented cell (clearly deeper
+   than polar names), so radio and name both read as children of the polar row
+   above. The injected admin stylesheet loads after this file, so selectors
+   must out-rank Bootstrap's `.table-sm td` and label rules. */
+.polar-list td.sailplan-cell { padding-left: 3.4rem; }
+.polar-list td.sailplan-cell label { margin-bottom: 0; }
+.polar-list td.sailplan-cell input { margin-right: 0.4rem; }
+
+/* ─── Gray out the wave-correction switch when the active polar can't use it ── */
+.wave-unavailable .switch,
+.wave-unavailable > label:first-child { opacity: 0.45; }
+.wave-unavailable .switch { cursor: not-allowed; }
+
 /* ─── Hand-rolled dropdown toggle (no Bootstrap JS bundle is loaded) ───────── */
 .dropdown { position: relative; }
 .dropdown-menu { display: none; position: absolute; z-index: 1000; }

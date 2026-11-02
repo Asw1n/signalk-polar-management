@@ -29,7 +29,8 @@
           "notes": { "type": "string" },
           "kind": { "type": "string", "enum": ["polarSet"] },
           "schemaVersion": { "type": "string" },
-          "tables": { "type": "array", "description": "V2 local display/export choices; absent id means best, supplied id is document-local.", "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" } }, "required": ["name"] } },
+          "tables": { "type": "array", "description": "V2 table choices (shared active-sailplan selection and local display/export); absent id means best, supplied id is document-local.", "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" } }, "required": ["name"] } },
+          "hasWaveCorrection": { "type": "boolean", "description": "V2 only: whether the document carries a vessel-wide wave correction table." },
           "error": { "type": "string", "description": "Explicit storage read error, if the document could not be summarized." },
           "hasDerived": { "type": "boolean" }
         },
@@ -319,15 +320,15 @@
     "/waveCorrection": {
       "get": {
         "operationId": "getWaveCorrection",
-        "summary": "Get whether polar consumers apply the active document's wave correction",
+        "summary": "Get the stored wave-correction setting",
         "responses": {
-          "200": { "description": "Shared wave-correction toggle; true means a present waveCorrection table is applied when sea state is supplied. It has no effect on documents without one.", "content": { "application/json": { "schema": { "type": "object", "properties": { "apply": { "type": "boolean" } }, "required": ["apply"] } } } }
+          "200": { "description": "Stored setting; true means a present waveCorrection table is applied when sea state is supplied. The published Signal K path is null whenever the active polar cannot use wave correction.", "content": { "application/json": { "schema": { "type": "object", "properties": { "apply": { "type": "boolean" } }, "required": ["apply"] } } } }
         }
       },
       "put": {
         "operationId": "setWaveCorrection",
         "summary": "Set the shared wave-correction toggle; publishes vessels.self.polars.applyWaveCorrection for use by other plugins",
-        "description": "Default is true. When false, active-polar in-process calculation handles ignore supplied sea state, so the active document's wave correction is not applied. Specific-polar handles are unaffected; their consumers control wave correction by supplying or omitting sea state. The webapp curve display never applies wave correction and is unaffected.",
+        "description": "Default is true. When false, active-polar in-process calculation handles ignore supplied sea state, so the active document's wave correction is not applied. The published path reflects usability: it carries null whenever the active polar is v1, has no waveCorrection table, or no usable polar is active; the stored setting is retained and republished when a wave-capable polar becomes active. Specific-polar handles are unaffected; their consumers control wave correction by supplying or omitting sea state. The webapp curve display never applies wave correction and is unaffected.",
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "type": "object", "properties": { "apply": { "type": "boolean" } }, "required": ["apply"] } } }

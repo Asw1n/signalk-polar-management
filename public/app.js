@@ -75,8 +75,9 @@ async function api(path, options) {
 
 // ── App state ─────────────────────────────────────────────────────────────────
 let polars = []
-let activeStatus = { id: null, exists: false, valid: false, errors: [] }
+let activeStatus = { id: null, sailplanId: null, exists: false, valid: false, errors: [] }
 let performanceFactor = 1
+let applyWaveCorrection = true
 let internetStatus = { online: false }
 let orcCached = false
 let lastFileImportError = ''
@@ -86,6 +87,8 @@ let orcQuery = ''
 let orcResults = null // null = no search run yet
 let activePage = 'active'
 let polarSort = { key: 'name', direction: 'asc' }
+// V2 rows whose sailplan sub-rows are shown in the selection table.
+const expandedPolars = new Set()
 let canvasObserver = null
 const curveRequests = new WeakMap()
 
@@ -134,10 +137,31 @@ function buildPolarTable({ selectable = false, actions = false } = {}) {
       </tr>
     </thead>
     <tbody>
-      ${sortedPolars().map(polar => `
+      ${sortedPolars().map(polar => {
+        const v2 = polar.kind === 'polarSet'
+        const expanded = selectable && v2 && expandedPolars.has(polar.id)
+        const cells = POLAR_COLUMNS.map((column, index) => `<td>${
+          index === 0 && selectable
+            ? (v2
+              ? `<button type="button" class="btn btn-link btn-sm p-0 text-reset text-decoration-none polar-expand" data-expand="${escapeHtml(polar.id)}" aria-expanded="${expanded}" aria-label="${expanded ? 'Hide' : 'Show'} sailplans">${expanded ? '&#9662;' : '&#9656;'}</button>${escapeHtml(column.value(polar))}`
+              : `<span class="polar-expand"></span>${escapeHtml(column.value(polar))}`)
+            : escapeHtml(column.value(polar))
+        }</td>`).join('')
+        const sailplanRows = expanded
+          ? (polar.tables || []).map(choice => {
+            const sailplanId = choice.id ?? ''
+            const checked = polar.id === activeStatus.id && (activeStatus.sailplanId || '') === sailplanId
+            return `
+        <tr class="sailplan-row">
+          <td></td>
+          <td colspan="${POLAR_COLUMNS.length}" class="sailplan-cell"><label><input type="radio" name="activeSailplanRadio" data-polar-id="${escapeHtml(polar.id)}" data-sailplan-id="${escapeHtml(sailplanId)}" ${checked ? 'checked' : ''}>${escapeHtml(choice.name)}${choice.id === undefined ? '<span class="text-muted small"> (default)</span>' : ''}</label></td>
+        </tr>`
+          }).join('')
+          : ''
+        return `
         <tr>
           ${selectable ? `<td><input type="radio" name="activePolarRadio" data-id="${escapeHtml(polar.id)}" ${polar.id === activeStatus.id ? 'checked' : ''}></td>` : ''}
-          ${POLAR_COLUMNS.map(column => `<td>${escapeHtml(column.value(polar))}</td>`).join('')}
+          ${cells}
           ${actions ? `
             <td class="polar-actions">
               <button class="btn btn-link btn-sm" data-action="preview" data-id="${escapeHtml(polar.id)}">View tables</button>
@@ -156,8 +180,8 @@ function buildPolarTable({ selectable = false, actions = false } = {}) {
               <button class="btn btn-link btn-sm text-danger" data-action="delete" data-id="${escapeHtml(polar.id)}">Delete</button>
             </td>
           ` : ''}
-        </tr>
-      `).join('')}
+        </tr>${sailplanRows}`
+      }).join('')}
     </tbody>
   `
   table.querySelectorAll('[data-sort-key]').forEach(button => {
@@ -166,6 +190,14 @@ function buildPolarTable({ selectable = false, actions = false } = {}) {
       polarSort = polarSort.key === key
         ? { key, direction: polarSort.direction === 'asc' ? 'desc' : 'asc' }
         : { key, direction: 'asc' }
+      rerender()
+    })
+  })
+  table.querySelectorAll('[data-expand]').forEach(button => {
+    button.addEventListener('click', () => {
+      const id = button.dataset.expand
+      if (expandedPolars.has(id)) expandedPolars.delete(id)
+      else expandedPolars.add(id)
       rerender()
     })
   })
@@ -181,6 +213,11 @@ async function loadPerformanceFactor() {
   performanceFactor = Number.isFinite(value) ? value : 1
 }
 
+async function loadWaveCorrection() {
+  const { apply } = await api('waveCorrection')
+  applyWaveCorrection = apply !== false
+}
+
 async function loadInternetStatus() { internetStatus = await api('internet') }
 
 async function loadOrcSourceStatus() {
@@ -192,7 +229,7 @@ async function loadOrcSourceStatus() {
 async function loadAll() {
   await Promise.all([
     loadPolars(), loadActiveStatus(), loadPerformanceFactor(),
-    loadInternetStatus(), loadOrcSourceStatus()
+    loadWaveCorrection(), loadInternetStatus(), loadOrcSourceStatus()
   ])
 }
 
@@ -276,18 +313,6 @@ function buildActivePage() {
   const activePolar = activeStatus.exists && activeStatus.valid ? polarById(activeStatus.id) : null
 
   if (activePolar) {
-    if (activePolar.kind === 'polarSet') {
-      const label = document.createElement('label')
-      label.textContent = 'Local display table (does not change the active document)'
-      const select = document.createElement('select')
-      select.className = 'form-select form-select-sm mb-2'
-      select.innerHTML = activePolar.tables.map((choice, index) => `<option value="${index}">${escapeHtml(choice.name)}</option>`).join('')
-      label.appendChild(select)
-      colGraph.appendChild(label)
-      select.addEventListener('change', () => {
-        loadOverviewCurves(activeStatus.id, canvasInstance, activePolar.tables[Number(select.value)].id, curveError)
-      })
-    }
     const canvas = document.createElement('canvas')
     canvas.id = 'polarCanvas'
     canvas.className = 'polar-canvas'
@@ -298,7 +323,9 @@ function buildActivePage() {
     colGraph.appendChild(curveError)
     const canvasInstance = new window.PolarCanvas(canvas)
     observeCanvasSize(canvas, canvasInstance)
-    loadOverviewCurves(activeStatus.id, canvasInstance, undefined, curveError)
+    // The graph always shows the shared selection, uncorrected: no performance
+    // factor and no wave correction are applied to it.
+    loadOverviewCurves(activeStatus.id, canvasInstance, activeStatus.sailplanId || undefined, curveError)
   } else {
     const placeholder = document.createElement('div')
     placeholder.className = 'text-muted small'
@@ -313,6 +340,12 @@ function buildActivePage() {
     dl.innerHTML = [
       ['Boat name', activePolar.name],
       ['ID', activePolar.id],
+      ['Format', activePolar.kind === 'polarSet' ? `v2 polarSet (${activePolar.schemaVersion})` : 'v1 polarTable'],
+      ['Sailplan', activePolar.kind === 'polarSet'
+        ? (activePolar.tables?.find(choice => (choice.id ?? null) === (activeStatus.sailplanId ?? null))?.name || activeStatus.sailplanId)
+        : undefined],
+      ['Sailplans', activePolar.kind === 'polarSet' ? String(Math.max((activePolar.tables?.length || 1) - 1, 0)) : undefined],
+      ['Wave correction', activePolar.kind === 'polarSet' ? (activePolar.hasWaveCorrection ? 'Included' : 'Not included') : undefined],
       ['Boat type', activePolar.boatType],
       ['Sail no.', activePolar.sailnumber],
       ['Year', activePolar.year],
@@ -329,37 +362,6 @@ function buildActivePage() {
     colDetails.appendChild(empty)
   }
 
-  colDetails.appendChild(sectionHeading('Polar adjustment'))
-  const adjWrap = document.createElement('div')
-  adjWrap.className = 'input-group'
-  adjWrap.style.maxWidth = '14rem'
-  adjWrap.innerHTML = `
-    <input type="number" id="performanceFactor" class="form-control form-control-sm" min="0" max="100" step="1" value="${Math.round(performanceFactor * 100)}">
-    <span class="input-group-text">%</span>
-  `
-  colDetails.appendChild(adjWrap)
-  const adjSave = document.createElement('button')
-  adjSave.className = 'btn btn-primary btn-sm mt-2'
-  adjSave.textContent = 'Save'
-  adjSave.addEventListener('click', async () => {
-    const percent = Number(colDetails.querySelector('#performanceFactor').value)
-    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
-      setMessage('Enter a performance factor from 0 to 100%', true)
-      return
-    }
-    try {
-      const { value } = await api('performanceFactor', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: percent / 100 })
-      })
-      performanceFactor = value
-      setMessage(`Polar adjustment set to ${Math.round(performanceFactor * 100)}%`)
-      await rerender()
-    } catch (e) {
-      setMessage(e.message, true)
-    }
-  })
-  colDetails.appendChild(adjSave)
-
   const warnings = []
   if (!activeStatus.id) {
     warnings.push('No active polar is selected.')
@@ -370,8 +372,78 @@ function buildActivePage() {
   }
   colDetails.appendChild(warningsSection(warnings))
 
+  // --- Adjustments card ---
+  // Shared consumer settings; they never change the graph above.
+  const adjustments = cardEl('Adjustments')
+  wrap.appendChild(adjustments.card)
+  const adjIntro = document.createElement('p')
+  adjIntro.className = 'text-muted small'
+  adjIntro.textContent = 'Shared with all polar consumers. The graph shows the uncorrected polar: neither adjustment changes it.'
+  adjustments.body.appendChild(adjIntro)
+
+  const factorLabel = document.createElement('label')
+  factorLabel.className = 'small'
+  factorLabel.setAttribute('for', 'performanceFactor')
+  factorLabel.textContent = 'Performance factor'
+  adjustments.body.appendChild(factorLabel)
+  const adjWrap = document.createElement('div')
+  adjWrap.className = 'input-group'
+  adjWrap.style.maxWidth = '14rem'
+  adjWrap.innerHTML = `
+    <input type="number" id="performanceFactor" class="form-control form-control-sm" min="0" max="100" step="1" value="${Math.round(performanceFactor * 100)}">
+    <span class="input-group-text">%</span>
+  `
+  adjustments.body.appendChild(adjWrap)
+  // Applied automatically on change (blur, Enter or spinner) — no Save button.
+  adjWrap.querySelector('#performanceFactor').addEventListener('change', async (event) => {
+    const percent = Number(event.target.value)
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      setMessage('Enter a performance factor from 0 to 100%', true)
+      event.target.value = Math.round(performanceFactor * 100)
+      return
+    }
+    try {
+      const { value } = await api('performanceFactor', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: percent / 100 })
+      })
+      performanceFactor = value
+      setMessage(`Polar adjustment set to ${Math.round(performanceFactor * 100)}%`)
+    } catch (e) {
+      setMessage(e.message, true)
+      event.target.value = Math.round(performanceFactor * 100)
+    }
+  })
+
+  const waveWrap = document.createElement('div')
+  const activeHasWaves = !!(activePolar && activePolar.kind === 'polarSet' && activePolar.hasWaveCorrection)
+  waveWrap.className = 'mt-3' + (activeHasWaves ? '' : ' wave-unavailable')
+  waveWrap.innerHTML = `
+    <label class="small d-block" for="applyWaveCorrection">Wave correction</label>
+    <label class="switch switch-text switch-primary mb-0">
+      <input type="checkbox" id="applyWaveCorrection" class="switch-input form-check-input" ${applyWaveCorrection ? 'checked' : ''} ${activeHasWaves ? '' : 'disabled'}>
+      <span class="switch-label" data-on="On" data-off="Off"></span>
+      <span class="switch-handle"></span>
+    </label>
+    <div class="form-text small text-muted">${activeHasWaves
+      ? 'Apply the active polar\u2019s wave correction when consumers supply sea state.'
+      : 'The active polar has no wave correction table; this setting has no effect on it.'}</div>
+  `
+  adjustments.body.appendChild(waveWrap)
+  waveWrap.querySelector('#applyWaveCorrection').addEventListener('change', async (event) => {
+    try {
+      const { apply } = await api('waveCorrection', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apply: event.target.checked })
+      })
+      applyWaveCorrection = apply
+      setMessage(`Wave correction ${apply ? 'enabled' : 'disabled'}`)
+    } catch (e) {
+      setMessage(e.message, true)
+      event.target.checked = applyWaveCorrection
+    }
+  })
+
   // --- Polar selection card ---
-  const selection = cardEl('Select polar')
+  const selection = cardEl('Select active polar')
   wrap.appendChild(selection.card)
 
   if (!polars.length) {
@@ -383,21 +455,30 @@ function buildActivePage() {
     const table = buildPolarTable({ selectable: true })
     selection.body.appendChild(table)
     table.addEventListener('change', async (event) => {
-      if (event.target.name !== 'activePolarRadio') return
+      const { name } = event.target
+      if (name !== 'activePolarRadio' && name !== 'activeSailplanRadio') return
+      // A polar radio selects the document with the default (best) sailplan; a
+      // sailplan radio selects document and sailplan in one atomic request.
+      const id = name === 'activePolarRadio' ? event.target.dataset.id : event.target.dataset.polarId
+      const sailplanId = name === 'activeSailplanRadio' ? event.target.dataset.sailplanId : ''
       try {
-        const v2 = polarById(event.target.dataset.id)?.kind === 'polarSet'
-        if (v2 && !window.confirm('Activate this complete v2 document? All performance consumers must support polarSet v2 first. The local display table is NOT shared.')) {
-          await rerender()
-          return
-        }
+        const polar = polarById(id)
+        const v2 = polar?.kind === 'polarSet'
         await api('activePolar', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: event.target.dataset.id, ...(v2 ? { acknowledgeV2: true } : {}) })
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, ...(sailplanId ? { sailplanId } : {}), ...(v2 ? { acknowledgeV2: true } : {}) })
         })
         await loadActiveStatus()
-        setMessage(`Active polar set to '${event.target.dataset.id}'`)
+        if (v2) expandedPolars.add(id)
+        const sailplanName = sailplanId
+          ? polar?.tables?.find(choice => choice.id === sailplanId)?.name || sailplanId
+          : ''
+        setMessage(`Active polar set to '${id}'${sailplanName ? ` \u2014 ${sailplanName}` : ''}`)
         await rerender()
       } catch (e) {
         setMessage(e.message, true)
+        await rerender()
       }
     })
   }
@@ -412,7 +493,7 @@ async function loadOverviewCurves(id, canvas, sailplanId, errorEl) {
   if (errorEl) errorEl.textContent = ''
   try {
     const selection = sailplanId === undefined ? '' : `&sailplanId=${encodeURIComponent(sailplanId)}`
-    const curves = await api(`polars/${encodeURIComponent(id)}/curves?step=5&corrected=true${selection}`)
+    const curves = await api(`polars/${encodeURIComponent(id)}/curves?step=5${selection}`)
     if (curveRequests.get(canvas) === request) canvas.loadCurves(curves)
   } catch (e) {
     if (curveRequests.get(canvas) !== request) return
@@ -883,6 +964,9 @@ async function init() {
 
   try {
     await loadAll()
+    if (activeStatus.id && polarById(activeStatus.id)?.kind === 'polarSet') {
+      expandedPolars.add(activeStatus.id)
+    }
   } catch (e) {
     setMessage(e.message, true)
   }

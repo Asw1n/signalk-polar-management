@@ -49,22 +49,25 @@ to best. A `sailplanId` must name an existing document-local sailplan and is
 rejected for v1 documents; if the selected sailplan is later removed from the
 document, the selection becomes explicitly invalid — it never silently falls
 back to best. Before activating a v2 resource, every performance/navigation
-consumer must support v2. The UI requires confirmation; the activation API
-requires `acknowledgeV2: true`. This acknowledgment is not automatic consumer
-capability detection. Existing v1 activation and persisted active selection
-behavior are unchanged. The performance plugin is not modified here.
+consumer must support v2. The activation API requires `acknowledgeV2: true`;
+the webapp supplies it automatically. This acknowledgment is not automatic
+consumer capability detection. Existing v1 activation and persisted active
+selection behavior are unchanged. The performance plugin is not modified here.
 Active in-process handles follow the shared sailplan selection on every
 calculation call; `polar(id, { sailplanId })` creates a fixed-sailplan handle.
-The UI's local display/export table choices remain independent of the shared
-selection. Handle lifecycle, factors, caching and change-notification
-contracts are unchanged.
+The Management page's **View tables** display/export choices remain local and
+independent of the shared selection. Handle lifecycle, factors, caching and
+change-notification contracts are unchanged.
 
 A v2 document may carry an optional vessel-wide `waveCorrection` table. The
-shared toggle at `vessels.self.polars.applyWaveCorrection` (default **on**,
-`GET/PUT /waveCorrection` with `{ "apply": true|false }`) controls whether
-active-polar consumers apply it: when off, active in-process handles ignore
-supplied sea state. The toggle persists across restarts and polar changes and
-simply has no effect on documents without a wave correction table. The webapp
+shared toggle (default **on**, `GET/PUT /waveCorrection` with
+`{ "apply": true|false }`) controls whether active-polar consumers apply it:
+when off, active in-process handles ignore supplied sea state. The published
+path `vessels.self.polars.applyWaveCorrection` reflects usability, not just the
+stored setting: it carries **null** whenever the active polar is a v1 document,
+a v2 document without a wave correction table, or no usable polar is active.
+The stored setting is kept and republished when a wave-capable polar becomes
+active again. The toggle persists across restarts and polar changes. The webapp
 curve display never applies wave correction. Specific `polar(id)` handles are
 completely independent of shared settings; their consumers control wave
 correction per call by supplying or omitting sea state.
@@ -179,6 +182,33 @@ The ORC importer currently uses the legacy `WPub.dll` service. ORC says it will 
 - Lets you choose which polar is the active one.
 - Makes it easier to import a polar from a file or an external source.
 - Helps other sailing tools use the correct polar without having to edit raw files by hand.
+
+## Select the active polar
+
+The **Active polar** page shows the current selection (graph and metadata,
+including the document format, its sailplan count, wave-correction availability
+and the selected sailplan), an **Adjustments** card, and one
+**Select active polar** table that handles both selections:
+
+- Every stored polar has a radio button. Selecting a polar activates it with
+  the default **Best performance** sailplan.
+- A v2 polar row can be expanded to show its sailplans, each with its own
+  radio button. Selecting one activates that polar **and** that sailplan in a
+  single step; the choice is shared with every consumer. The webapp supplies
+  the v2 `acknowledgeV2` acknowledgment automatically; ensure your consumers
+  support v2 before storing and activating v2 documents.
+
+The **Adjustments** card carries the shared consumer settings:
+
+- **Performance factor** (0–100%) reduces the polar speeds that consumers use.
+  Changes apply immediately; there is no Save button.
+- **Wave correction** (default on) controls whether consumers apply the active
+  polar's optional wave correction. The switch is grayed out and disabled when
+  the active polar cannot use wave correction (v1, or v2 without a wave
+  correction table); the published Signal K path is null in that case.
+
+Neither adjustment changes the graph: it always shows the uncorrected polar
+for the shared polar/sailplan selection.
 
 ## Modify a stored polar
 
