@@ -164,19 +164,8 @@ function buildPolarTable({ selectable = false, actions = false } = {}) {
           ${cells}
           ${actions ? `
             <td class="polar-actions">
-              <button class="btn btn-link btn-sm" data-action="preview" data-id="${escapeHtml(polar.id)}">View tables</button>
-              <button class="btn btn-link btn-sm" data-action="modify" data-id="${escapeHtml(polar.id)}">Modify</button>
+              <button class="btn btn-link btn-sm" data-action="open" data-id="${escapeHtml(polar.id)}">Open</button>
               <button class="btn btn-link btn-sm" data-action="copy" data-id="${escapeHtml(polar.id)}">Copy</button>
-              <div class="dropdown d-inline">
-                <button class="btn btn-link btn-sm dropdown-toggle" type="button" data-dropdown-toggle>Export</button>
-                <div class="dropdown-menu dropdown-menu-right">
-                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/json" download>Complete canonical JSON</a>
-                  ${polar.kind === 'polarSet'
-                    ? `<button class="dropdown-item" data-action="preview" data-id="${escapeHtml(polar.id)}">Selected table (lossy)...</button>`
-                    : `<a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/jieter" download>Jieter text</a>
-                       <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/expedition" download>Expedition text</a>`}
-                </div>
-              </div>
               <button class="btn btn-link btn-sm text-danger" data-action="delete" data-id="${escapeHtml(polar.id)}">Delete</button>
             </td>
           ` : ''}
@@ -537,29 +526,12 @@ function buildManagementPage() {
   stored.body.appendChild(warningsSection(polars.filter(polar => polar.error).map(polar => `${polar.id}: ${polar.error}`)))
 
   table.addEventListener('click', async (event) => {
-    const toggle = event.target.closest('[data-dropdown-toggle]')
-    if (toggle) {
-      event.preventDefault()
-      const menu = toggle.nextElementSibling
-      const isOpen = menu.classList.contains('show')
-      table.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'))
-      if (!isOpen) menu.classList.add('show')
-      return
-    }
-    if (event.target.closest('a.dropdown-item')) {
-      table.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'))
-      return
-    }
     const target = event.target.closest('[data-action]')
     if (!target) return
     const { action, id } = target.dataset
     try {
-      if (action === 'preview') {
-        await showPolarTables(polarById(id))
-        return
-      }
-      if (action === 'modify') {
-        showModifyPolar(polarById(id))
+      if (action === 'open') {
+        await showPolarDocument(id)
         return
       }
       if (action === 'copy') await copyPolar(id)
@@ -573,50 +545,175 @@ function buildManagementPage() {
   return wrap
 }
 
-async function showPolarTables(polar) {
-  const documentBody = await api(`polars/${encodeURIComponent(polar.id)}`)
+// ── Open document view ─────────────────────────────────────────────────────────
+// One card for everything about a stored polar: editable metadata, table
+// display/export, sailplan editing (v2), wave correction (v2) and the
+// complete-document export.
+async function showPolarDocument(polarId) {
+  let documentBody
+  try {
+    documentBody = await api(`polars/${encodeURIComponent(polarId)}`)
+  } catch (e) {
+    setMessage(e.message, true)
+    return
+  }
   const v2 = documentBody.kind === 'polarSet'
+  const reopen = async (id = polarId) => {
+    await Promise.all([loadPolars(), loadActiveStatus(), loadWaveCorrection()])
+    await showPolarDocument(id)
+  }
+  const view = cardEl(`Polar \u2014 ${documentBody.name || polarId}`)
+  const body = view.body
+
+  // --- Metadata ---
+  body.appendChild(sectionHeading('Metadata'))
+  const info = document.createElement('p')
+  info.className = 'small text-muted'
+  info.textContent = [
+    v2 ? `Format: v2 polarSet (${documentBody.schemaVersion})` : 'Format: v1 polarTable',
+    documentBody.source ? `Source: ${documentBody.source}` : ''
+  ].filter(Boolean).join(' \u2022 ')
+  body.appendChild(info)
+  const metaForm = document.createElement('form')
+  metaForm.innerHTML = `
+    <fieldset>
+      <div class="row">
+        ${POLAR_COLUMNS.filter(column => column.key !== 'source').map(column => `
+          <div class="col-md-6 mb-3">
+            <label class="small" for="meta-${column.key}">${column.label}</label>
+            <input class="form-control form-control-sm" id="meta-${column.key}" name="${column.key}"
+              type="${column.key === 'year' ? 'number' : 'text'}"
+              ${column.key === 'year' ? 'step="1"' : ''}
+              ${column.key === 'id' ? 'required maxlength="100"' : ''}
+              value="${escapeHtml((column.key === 'id' ? polarId : documentBody[column.key]) ?? '')}">
+          </div>
+        `).join('')}
+        <div class="col-md-6 mb-3">
+          <label class="small" for="meta-notes">Notes</label>
+          <input class="form-control form-control-sm" id="meta-notes" name="notes" type="text"
+            value="${escapeHtml(documentBody.notes ?? '')}">
+        </div>
+      </div>
+      <div class="alert alert-danger small" role="alert" hidden></div>
+      <button type="submit" class="btn btn-primary btn-sm">Save metadata</button>
+    </fieldset>
+  `
+  metaForm.addEventListener('submit', async event => {
+    event.preventDefault()
+    if (!metaForm.reportValidity()) return
+    const fieldset = metaForm.querySelector('fieldset')
+    const error = metaForm.querySelector('[role="alert"]')
+    const metadata = Object.fromEntries(new FormData(metaForm))
+    metadata.year = metadata.year === '' ? null : Number(metadata.year)
+    error.hidden = true
+    fieldset.disabled = true
+    try {
+      const { id } = await api(`polars/${encodeURIComponent(polarId)}/metadata`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(metadata)
+      })
+      setMessage(`Saved '${id}'`)
+      await reopen(id)
+    } catch (e) {
+      error.textContent = e.message
+      error.hidden = false
+      fieldset.disabled = false
+    }
+  })
+  body.appendChild(metaForm)
+
+  // --- Tables ---
+  body.appendChild(sectionHeading('Tables'))
   const choices = v2
     ? [{ name: 'Best performance', table: documentBody.best }, ...(documentBody.sailplans || [])]
     : [{ name: 'Polar table', table: documentBody }]
-  const view = cardEl('Polar tables')
-  view.body.innerHTML = `
-    <p class="small text-muted">Document: ${escapeHtml(documentBody.name || polar.id)} (${escapeHtml(documentBody.schemaVersion)}).
-      Table selection is local to this view; the active-polar pointer is unchanged.</p>
-    <label for="viewTable">Display / export table</label>
-    <select id="viewTable" class="form-select form-select-sm mb-2">
-      ${choices.map((choice, index) => `<option value="${index}">${escapeHtml(choice.name)}</option>`).join('')}
-    </select>
+  const tables = document.createElement('div')
+  tables.innerHTML = `
+    ${v2 ? `
+    <label for="docTable">Table</label>
+    <div class="d-flex align-items-center mb-1">
+      <select id="docTable" class="form-select form-select-sm" style="max-width:20rem">
+        ${choices.map((choice, index) => `<option value="${index}">${escapeHtml(choice.name)}</option>`).join('')}
+      </select>
+      <button class="btn btn-danger btn-sm ms-2" data-table-delete hidden>Delete</button>
+    </div>
+    <p data-table-error class="text-danger small" role="alert"></p>` : ''}
+    <div data-sailplan-editor class="mb-2"></div>
     <div class="row"><div class="col-md-5 col-lg-4"><canvas class="polar-canvas"></canvas></div></div>
     <div data-curve-error class="text-danger small" role="status"></div>
     <div data-table></div>
-    <h5 class="mt-3">Export</h5>
-    <a class="btn btn-secondary btn-sm mb-2" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/json" download>Complete canonical document (lossless)</a>
-    <p class="small">Selected-table exports are projections, not complete-document exports.
-      ${v2 ? 'They omit other tables, sail descriptions, wave correction, heel/reef/flat and winning references. Root boat metadata is retained where the format supports it; it does not describe the selected sailplan.' : ''}
-      Text formats round numbers and may lose target details. Missing speeds are rejected, never replaced with zero.</p>
+    <h6 class="mt-3">Export selected table</h6>
+    <p class="small">Exports only the boat speeds of the selected table.</p>
     <select data-export-format class="form-select form-select-sm mb-2" aria-label="Selected-table export format">
       <option value="expedition">Expedition text</option>
       <option value="jieter">Jieter text</option>
       <option value="json-v1">Canonical v1 table${v2 ? ' (lossy projection)' : ''}</option>
     </select>
-    <label><input type="checkbox" data-ack-loss> I accept the selected-table projection and information loss.</label>
-    <div><button class="btn btn-primary btn-sm" data-export-table>Export selected table</button>
-      <button class="btn btn-secondary btn-sm" data-close-view>Close</button></div>
+    <div><button class="btn btn-primary btn-sm" data-export-table>Export selected table</button></div>
     <p data-export-error class="text-danger small mt-2" role="alert"></p>
+    ${v2 ? `
+    <h6 class="mt-3">Add sailplan specific table</h6>
+    <div class="row">
+      <div class="col-md-4 mb-2"><input data-sailplan-name class="form-control form-control-sm" placeholder="Sailplan name" aria-label="New sailplan name"></div>
+      <div class="col-md-5 mb-2"><input type="file" data-sailplan-file class="form-control form-control-sm" aria-label="Single-table polar file"></div>
+      <div class="col-md-3 mb-2"><button class="btn btn-primary btn-sm" data-sailplan-add>Add sailplan</button></div>
+    </div>
+    <p class="form-text small text-muted">Single-table formats (canonical v1 JSON, Jieter, Expedition, TimeZero) are detected automatically; the table keeps its own wind grid.</p>
+    <p data-sailplan-error class="text-danger small" role="alert"></p>` : ''}
   `
-  const select = view.body.querySelector('#viewTable')
-  const canvas = new window.PolarCanvas(view.body.querySelector('canvas'))
+  body.appendChild(tables)
+  const select = tables.querySelector('#docTable')
+  const selectedIndex = () => (select ? Number(select.value) : 0)
+  const canvas = new window.PolarCanvas(tables.querySelector('canvas'))
   let generation = 0
+
+  const renderSailplanEditor = () => {
+    const editor = tables.querySelector('[data-sailplan-editor]')
+    const choice = choices[selectedIndex()]
+    if (!v2 || choice.id === undefined) {
+      editor.innerHTML = ''
+      return
+    }
+    editor.innerHTML = `
+      <div class="row align-items-end">
+        <div class="col-md-3 mb-2"><label class="small" for="sp-id">Sailplan ID</label>
+          <input id="sp-id" data-sp-id class="form-control form-control-sm" value="${escapeHtml(choice.id)}"></div>
+        <div class="col-md-3 mb-2"><label class="small" for="sp-name">Name</label>
+          <input id="sp-name" data-sp-name class="form-control form-control-sm" value="${escapeHtml(choice.name)}"></div>
+        <div class="col-md-4 mb-2"><label class="small" for="sp-notes">Notes</label>
+          <input id="sp-notes" data-sp-notes class="form-control form-control-sm" value="${escapeHtml(choice.notes ?? '')}"></div>
+        <div class="col-md-2 mb-2">
+          <button class="btn btn-primary btn-sm" data-sp-save>Save</button>
+        </div>
+      </div>
+      <p data-sp-error class="text-danger small" role="alert"></p>
+    `
+    editor.querySelector('[data-sp-save]').addEventListener('click', async () => {
+      const payload = {
+        id: editor.querySelector('[data-sp-id]').value.trim(),
+        name: editor.querySelector('[data-sp-name]').value.trim(),
+        notes: editor.querySelector('[data-sp-notes]').value
+      }
+      try {
+        await api(`polars/${encodeURIComponent(polarId)}/sailplans/${encodeURIComponent(choice.id)}/metadata`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        })
+        setMessage(`Saved sailplan '${payload.id}'`)
+        await reopen()
+      } catch (e) {
+        editor.querySelector('[data-sp-error]').textContent = e.message
+      }
+    })
+  }
+
   const render = async () => {
     const current = ++generation
-    const choice = choices[Number(select.value)]
+    const choice = choices[selectedIndex()]
     const table = choice.table
     const number = (value, factor = 1, digits = 2) => value === null || value === undefined ? '-' : (value * factor).toFixed(digits)
     const knots = 3600 / 1852
     const degrees = 180 / Math.PI
     const quantities = [['boatSpeedMatrix', 'Boat speed (kn)', knots], ['heelMatrix', 'Heel (deg)', degrees], ['reefMatrix', 'Reef factor', 1], ['flatMatrix', 'Flat factor', 1]]
-    view.body.querySelector('[data-table]').innerHTML = `
+    tables.querySelector('[data-table]').innerHTML = `
       ${choice.sails ? `<p class="small">${choice.sails.map(sail => escapeHtml(`${sail.name}${sail.sourceId ? ` / source ${sail.sourceId}` : ''}${sail.area ? ` / ${sail.area} m2` : ''}`)).join('; ')}</p>` : ''}
       ${quantities.filter(([key]) => table.values[key]).map(([key, title, factor]) => `
         <h6 class="mt-3">${title}</h6><div class="table-responsive"><table class="table table-sm">
@@ -628,100 +725,153 @@ async function showPolarTables(polar) {
         const target = row[role]
         return `<tr><th>${number(row.tws, knots)}</th><td>${role}</td><td>${number(target?.twa, degrees)}</td><td>${number(target?.tbs, knots)}</td><td>${number(target?.vmg, knots)}</td><td>${number(target?.heel, degrees)}</td><td>${number(target?.reef, 1, 4)}</td><td>${number(target?.flat, 1, 4)}</td></tr>`
       })).join('')}</tbody></table></div>`
-    const errorEl = view.body.querySelector('[data-curve-error]')
+    renderSailplanEditor()
+    const deleteButton = tables.querySelector('[data-table-delete]')
+    if (deleteButton) deleteButton.hidden = choice.id === undefined
+    const errorEl = tables.querySelector('[data-curve-error]')
     errorEl.textContent = ''
     canvas.loadCurves({ curves: [] })
     try {
       const selection = choice.id === undefined ? '' : `&sailplanId=${encodeURIComponent(choice.id)}`
-      const result = await api(`polars/${encodeURIComponent(polar.id)}/curves?step=5${selection}`)
+      const result = await api(`polars/${encodeURIComponent(polarId)}/curves?step=5${selection}`)
       if (current === generation) canvas.loadCurves(result)
     } catch (error) {
       if (current === generation) errorEl.textContent = error.message
     }
   }
-  select.addEventListener('change', render)
-  view.body.querySelector('[data-export-table]').addEventListener('click', async () => {
-    const errorEl = view.body.querySelector('[data-export-error]')
+  select?.addEventListener('change', render)
+
+  tables.querySelector('[data-table-delete]')?.addEventListener('click', async () => {
+    const choice = choices[selectedIndex()]
+    if (choice.id === undefined) return
+    const errorEl = tables.querySelector('[data-table-error]')
     errorEl.textContent = ''
-    if (!view.body.querySelector('[data-ack-loss]').checked) {
-      errorEl.textContent = 'Acknowledge the selected-table projection before exporting.'
-      return
+    if (!window.confirm(`Delete sailplan '${choice.name}'?`)) return
+    try {
+      await api(`polars/${encodeURIComponent(polarId)}/sailplans/${encodeURIComponent(choice.id)}`, { method: 'DELETE' })
+      setMessage(`Deleted sailplan '${choice.name}'`)
+      await reopen()
+    } catch (e) {
+      errorEl.textContent = e.message
     }
-    const format = view.body.querySelector('[data-export-format]').value
-    const choice = choices[Number(select.value)]
+  })
+
+  tables.querySelector('[data-export-table]').addEventListener('click', async () => {
+    const errorEl = tables.querySelector('[data-export-error]')
+    errorEl.textContent = ''
+    const format = tables.querySelector('[data-export-format]').value
+    const choice = choices[selectedIndex()]
     const query = new URLSearchParams({ scope: 'table', acknowledgeLoss: 'true' })
     if (choice.id !== undefined) query.set('sailplanId', choice.id)
     try {
-      const text = await api(`polars/${encodeURIComponent(polar.id)}/export/${format}?${query}`)
+      const text = await api(`polars/${encodeURIComponent(polarId)}/export/${format}?${query}`)
       const blob = new Blob([typeof text === 'string' ? text : JSON.stringify(text, null, 2)], { type: format === 'json-v1' ? 'application/json' : 'text/plain' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `${polar.id}-${Number(select.value)}.${format === 'json-v1' ? 'json' : 'txt'}`
+      link.download = `${polarId}-${selectedIndex()}.${format === 'json-v1' ? 'json' : 'txt'}`
       link.click()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (error) {
       errorEl.textContent = error.message
     }
   })
-  view.body.querySelector('[data-close-view]').addEventListener('click', () => rerender())
-  document.getElementById('card-body').replaceChildren(view.card)
-  observeCanvasSize(view.body.querySelector('canvas'), canvas)
-  await render()
-}
 
-function showModifyPolar(polar) {
-  const editor = cardEl('Modify polar')
-  const form = document.createElement('form')
-  form.innerHTML = `
-    <fieldset>
-      <div class="row">
-        ${POLAR_COLUMNS.filter(column => column.key !== 'source').map(column => `
-          <div class="col-md-6 mb-3">
-            <label class="small" for="modify-${column.key}">${column.label}</label>
-            <input class="form-control form-control-sm" id="modify-${column.key}" name="${column.key}"
-              type="${column.key === 'year' ? 'number' : 'text'}"
-              ${column.key === 'year' ? 'step="1"' : ''}
-              ${column.key === 'id' ? 'required maxlength="100"' : ''}
-              value="${escapeHtml(polar[column.key] ?? '')}">
-          </div>
-        `).join('')}
-      </div>
-      <div class="alert alert-danger small" role="alert" hidden></div>
-      <button type="submit" class="btn btn-primary btn-sm">Save</button>
-      <button type="button" class="btn btn-secondary btn-sm ms-2" data-action="cancel">Cancel</button>
-    </fieldset>
-  `
-  form.querySelector('[data-action="cancel"]').addEventListener('click', () => rerender())
-  form.addEventListener('submit', async event => {
-    event.preventDefault()
-    if (!form.reportValidity()) return
-    const fieldset = form.querySelector('fieldset')
-    const error = form.querySelector('[role="alert"]')
-    const data = new FormData(form)
-    const metadata = Object.fromEntries(data)
-    metadata.year = metadata.year === '' ? null : Number(metadata.year)
-    error.hidden = true
-    fieldset.disabled = true
+  tables.querySelector('[data-sailplan-add]')?.addEventListener('click', async () => {
+    const errorEl = tables.querySelector('[data-sailplan-error]')
+    errorEl.textContent = ''
+    const name = tables.querySelector('[data-sailplan-name]').value.trim()
+    const file = tables.querySelector('[data-sailplan-file]').files[0]
+    if (!name) { errorEl.textContent = 'Enter a sailplan name.'; return }
+    if (!file) { errorEl.textContent = 'Choose a single-table polar file.'; return }
     try {
-      const { id } = await api(`polars/${encodeURIComponent(polar.id)}/metadata`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(metadata)
+      const content = await readFileAsText(file)
+      const { id } = await api(`polars/${encodeURIComponent(polarId)}/sailplans`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, name })
       })
-      await Promise.all([loadPolars(), loadActiveStatus()])
-      setMessage(`Saved '${id}'`)
-      if (activePage === 'management') await rerender()
+      setMessage(`Added sailplan '${id}'`)
+      await reopen()
     } catch (e) {
-      error.textContent = e.message
-      error.hidden = false
-      setMessage(e.message, true)
-    } finally {
-      fieldset.disabled = false
+      errorEl.textContent = e.message
     }
   })
-  editor.body.appendChild(form)
-  const body = document.getElementById('card-body')
-  body.replaceChildren(editor.card)
-  form.querySelector('input').focus()
+
+  // --- Wave correction (v2 only) ---
+  if (v2) {
+    body.appendChild(sectionHeading('Wave correction'))
+    const wave = document.createElement('div')
+    const current = documentBody.waveCorrection
+    const summary = current
+      ? (() => {
+        const heights = current.heights.map(layer => layer.significantWaveHeight)
+        const periods = current.heights.flatMap(layer => layer.axes.wavePeriod)
+        return `${current.heights.length} height layer(s), ${Math.min(...heights)}\u2013${Math.max(...heights)} m, wave periods ${Math.min(...periods)}\u2013${Math.max(...periods)} s.`
+      })()
+      : 'No wave correction table available.'
+    wave.innerHTML = `
+      <p class="small mb-2">${escapeHtml(summary)}</p>
+      <div class="row">
+        <div class="col-md-5 mb-2"><input type="file" data-wave-file class="form-control form-control-sm" aria-label="Wave correction file"></div>
+        <div class="col-md-7 mb-2">
+          <button class="btn btn-primary btn-sm" data-wave-import>Import${current ? ' (replace)' : ''}</button>
+          ${current ? `<button class="btn btn-primary btn-sm" data-wave-export>Export JSON</button>
+          <button class="btn btn-link btn-sm text-danger" data-wave-delete>Remove</button>` : ''}
+        </div>
+      </div>
+      <p class="form-text small text-muted">TimeZero Wave_Polar.xml or a canonical JSON fragment, detected automatically. Import replaces the whole correction; missing factors are never filled.</p>
+      <p data-wave-error class="text-danger small" role="alert"></p>
+    `
+    body.appendChild(wave)
+    wave.querySelector('[data-wave-import]').addEventListener('click', async () => {
+      const errorEl = wave.querySelector('[data-wave-error]')
+      errorEl.textContent = ''
+      const file = wave.querySelector('[data-wave-file]').files[0]
+      if (!file) { errorEl.textContent = 'Choose a wave-correction file.'; return }
+      try {
+        const content = await readFileAsText(file)
+        const { heights } = await api(`polars/${encodeURIComponent(polarId)}/waveCorrection/import`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content })
+        })
+        setMessage(`Imported wave correction (${heights} height layers)`)
+        await reopen()
+      } catch (e) {
+        errorEl.textContent = e.message
+      }
+    })
+    wave.querySelector('[data-wave-export]')?.addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify({ waveCorrection: current }, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${polarId}-wave-correction.json`
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    })
+    wave.querySelector('[data-wave-delete]')?.addEventListener('click', async () => {
+      if (!window.confirm('Remove the wave correction from this polar?')) return
+      try {
+        await api(`polars/${encodeURIComponent(polarId)}/waveCorrection`, { method: 'DELETE' })
+        setMessage('Wave correction removed')
+        await reopen()
+      } catch (e) {
+        wave.querySelector('[data-wave-error]').textContent = e.message
+      }
+    })
+  }
+
+  // --- Document ---
+  body.appendChild(sectionHeading('Document'))
+  const footer = document.createElement('div')
+  footer.innerHTML = `
+    <a class="btn btn-primary btn-sm" href="${BASE}/polars/${encodeURIComponent(polarId)}/export/json" download>Export complete canonical JSON</a>
+    <button class="btn btn-primary btn-sm ms-2" data-close-view>Close</button>
+  `
+  footer.querySelector('[data-close-view]').addEventListener('click', () => rerender())
+  body.appendChild(footer)
+
+  document.getElementById('card-body').replaceChildren(view.card)
+  observeCanvasSize(tables.querySelector('canvas'), canvas)
+  await render()
 }
 
 async function copyPolar(id) {
@@ -743,13 +893,19 @@ async function deletePolar(id) {
 }
 
 // ── Import page ────────────────────────────────────────────────────────────────
-function readFileAsText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = () => reject(reader.error)
-    reader.readAsText(file)
-  })
+// Decodes an uploaded file as text. Some sources (e.g. TimeZero) write UTF-16
+// with or without a BOM despite their declared encodings; plain UTF-8 decoding
+// would NUL-pad every character and break format detection.
+async function readFileAsText(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let encoding = 'utf-8'
+  if (bytes.length >= 2) {
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = 'utf-16le'
+    else if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = 'utf-16be'
+    else if (bytes[0] !== 0 && bytes[1] === 0) encoding = 'utf-16le'
+    else if (bytes[0] === 0 && bytes[1] !== 0) encoding = 'utf-16be'
+  }
+  return new TextDecoder(encoding).decode(bytes)
 }
 
 // The server auto-detects the format, so no format picker is offered.
@@ -954,11 +1110,6 @@ async function init() {
       document.body.classList.toggle('sidebar-mobile-show')
     } else {
       document.body.classList.toggle('sidebar-hidden')
-    }
-  })
-  document.addEventListener('click', (event) => {
-    if (!event.target.closest('.dropdown')) {
-      document.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'))
     }
   })
 

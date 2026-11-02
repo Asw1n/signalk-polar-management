@@ -191,7 +191,7 @@
       "put": {
         "operationId": "modifyPolarMetadata",
         "summary": "Modify boat metadata and optionally change the polar id",
-        "description": "Preserves polar speed data, source and notes. Omitted fields are unchanged; empty strings clear optional text fields and null clears year. Changing an active polar's id also persists and publishes its new active selection.",
+        "description": "Preserves polar speed data and source. Omitted fields are unchanged; empty strings clear optional text fields and null clears year. Changing an active polar's id also persists and publishes its new active selection.",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "requestBody": {
           "required": true,
@@ -206,7 +206,8 @@
                   "name": { "type": "string" },
                   "boatType": { "type": "string" },
                   "sailnumber": { "type": "string" },
-                  "year": { "type": "integer", "nullable": true }
+                  "year": { "type": "integer", "nullable": true },
+                  "notes": { "type": "string" }
                 }
               }
             }
@@ -232,6 +233,112 @@
         "responses": {
           "200": { "description": "Renamed", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } } },
           "400": { "description": "Missing id or id already exists", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/polars/{id}/waveCorrection": {
+      "get": {
+        "operationId": "getPolarWaveCorrection",
+        "summary": "Get a v2 polar's wave-correction fragment",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Canonical fragment, re-importable via PUT or the import endpoint", "content": { "application/json": { "schema": { "type": "object", "properties": { "waveCorrection": { "type": "object" } }, "required": ["waveCorrection"] } } } },
+          "404": { "description": "Polar not found, or it has no wave correction (always for v1)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "put": {
+        "operationId": "setPolarWaveCorrection",
+        "summary": "Replace a v2 polar's wave correction with a canonical fragment",
+        "description": "The complete updated document is validated before saving (ordering, matrix dimensions, zero-height neutrality); invalid fragments change nothing. Replacing the active polar's correction re-evaluates the published applyWaveCorrection path.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "waveCorrection": { "type": "object" } }, "required": ["waveCorrection"] } } }
+        },
+        "responses": {
+          "200": { "description": "Replaced", "content": { "application/json": { "schema": { "type": "object", "properties": { "heights": { "type": "integer" } } } } } },
+          "400": { "description": "v1 document, or the fragment does not validate", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Polar not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "operationId": "deletePolarWaveCorrection",
+        "summary": "Remove a v2 polar's wave correction",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "204": { "description": "Removed; the active polar's published applyWaveCorrection path becomes null" },
+          "404": { "description": "Polar not found or no wave correction present", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/polars/{id}/waveCorrection/import": {
+      "post": {
+        "operationId": "importPolarWaveCorrection",
+        "summary": "Import and replace a v2 polar's wave correction from text",
+        "description": "Auto-detects a TimeZero Wave_Polar.xml (degrees are converted to radians) or a canonical JSON fragment. The import replaces the whole correction; curves within one height layer must share an angle grid and missing factors are never filled.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "content": { "type": "string" } }, "required": ["content"] } } }
+        },
+        "responses": {
+          "200": { "description": "Imported", "content": { "application/json": { "schema": { "type": "object", "properties": { "heights": { "type": "integer" } } } } } },
+          "400": { "description": "v1 document, unrecognised or malformed content", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Polar not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/polars/{id}/sailplans": {
+      "post": {
+        "operationId": "addPolarSailplan",
+        "summary": "Add a sailplan to a v2 polar from single-table polar text",
+        "description": "Auto-detects canonical v1 JSON, Jieter, Expedition or TimeZero wind-polar content; complete v2 documents are rejected. The table keeps its own wind grid; its port/starboard symmetry must match the document. The sailplan id is derived from the name when omitted and must be unique.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "content": { "type": "string" }, "name": { "type": "string" }, "id": { "type": "string", "minLength": 1 } }, "required": ["content", "name"] } } }
+        },
+        "responses": {
+          "200": { "description": "Added", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } } },
+          "400": { "description": "v1 document, unrecognised content, symmetry mismatch or duplicate id", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Polar not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/polars/{id}/sailplans/{sailplanId}": {
+      "delete": {
+        "operationId": "deletePolarSailplan",
+        "summary": "Delete a sailplan from a v2 polar",
+        "description": "Strictly rejected while the best table references the sailplan as a winning sailplan, and while it is the shared active sailplan. References are never stripped silently.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "sailplanId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "400": { "description": "v1 document", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Polar or sailplan not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Sailplan is referenced by best or is the active sailplan", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/polars/{id}/sailplans/{sailplanId}/metadata": {
+      "put": {
+        "operationId": "modifyPolarSailplanMetadata",
+        "summary": "Edit a sailplan's id, name and notes",
+        "description": "Renaming the id updates best's winning-sailplan references and, when it is the shared active sailplan, the active selection follows the new id and is republished. Null or empty notes clear the field.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "sailplanId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "minLength": 1 }, "name": { "type": "string", "minLength": 1 }, "notes": { "type": "string", "nullable": true } } } } }
+        },
+        "responses": {
+          "200": { "description": "Saved", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } } },
+          "400": { "description": "v1 document, invalid fields or duplicate id", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Polar or sailplan not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },

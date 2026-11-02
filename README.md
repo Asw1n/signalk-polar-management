@@ -21,7 +21,7 @@ metadata edits preserve every nested field: auxiliary heel/reef/flat matrices,
 nulls, targets, winning references and vessel-wide wave correction. Sail
 descriptions are not inventory associations or operational reef settings.
 
-Choose **View tables** in Polar management to inspect best or a sailplan's
+Choose **Open** in Polar management to inspect best or a sailplan's
 speed/auxiliary tables and exact supplied targets. Table selection is local;
 root boat metadata and wave context are not embedded-table metadata.
 
@@ -55,8 +55,8 @@ consumer capability detection. Existing v1 activation and persisted active
 selection behavior are unchanged. The performance plugin is not modified here.
 Active in-process handles follow the shared sailplan selection on every
 calculation call; `polar(id, { sailplanId })` creates a fixed-sailplan handle.
-The Management page's **View tables** display/export choices remain local and
-independent of the shared selection. Handle lifecycle, factors, caching and
+The Management page's **Open** view display/export table choices remain local
+and independent of the shared selection. Handle lifecycle, factors, caching and
 change-notification contracts are unchanged.
 
 A v2 document may carry an optional vessel-wide `waveCorrection` table. The
@@ -118,14 +118,17 @@ remain numeric. Do not interpret unavailable values as real sailing optima.
   references, auxiliary values and wave correction.
 - **Selected table** (best by default, or a chosen descriptive sailplan) offers
   Expedition, Jieter, and canonical v1 JSON. For v2 these are explicitly
-  **lossy projections**, requiring acknowledgment. Other tables, sail
+  **lossy projections**: the API requires `acknowledgeLoss=true` and the webapp
+  supplies it automatically. Other tables, sail
   descriptions, auxiliary quantities, wave correction and winning references
   are omitted. Supported root boat metadata is retained, not relabeled as
   sailplan metadata. Text formats also round numbers and may lose target
   details. Canonical v1 projection is not a lossless canonical v2 export.
 - Missing speeds are incompatible with these single-table formats and produce
   an error. No interpolation, zero filling or flattening of the set occurs.
-  Existing v1 download actions retain their behavior.
+
+All exports live in the **Open** view of a stored polar, alongside the wave
+correction export described below.
 
 API: `GET /polars/{id}/export/json` exports the complete document and rejects
 table-selection parameters. For a v2 projection use
@@ -210,29 +213,45 @@ The **Adjustments** card carries the shared consumer settings:
 Neither adjustment changes the graph: it always shows the uncorrected polar
 for the shared polar/sailplan selection.
 
-## Modify a stored polar
+## Open a stored polar
 
-Editing requires Signal K administrator access.
+Choose **Open** beside a polar in the **Stored polars** table. One view holds
+everything about the document (editing requires Signal K administrator access):
 
-1. Open **Polar management**.
-2. Choose **Modify** beside a polar in the **Stored polars** table.
-3. Edit the boat name, ID, boat type, sail number, or year.
-4. Choose **Save** to apply the changes, or **Cancel** to return to the table
-   without saving.
+- **Metadata** — edit the boat name, ID, boat type, sail number, year and
+  notes, then **Save metadata**. Optional fields clear when left blank; the
+  year must be a whole number. Changing the ID renames the polar, and an
+  active polar's selection follows the new ID. All performance data (including
+  nested v2 tables and wave correction) and the source are preserved.
+- **Tables** — view best or a sailplan's curves, numeric tables and supplied
+  targets, and export the selected table (Expedition, Jieter or canonical v1;
+  the webapp supplies the lossy-projection acknowledgment automatically). For
+  v2 documents each sailplan's ID,
+  name and notes can be edited; renaming an ID updates best's winning-sailplan
+  references, and the shared active sailplan follows the rename. Sailplans can
+  be deleted — strictly rejected while best references them or while they are
+  the active sailplan — and new sailplans can be added from a single-table
+  polar file (canonical v1 JSON, Jieter, Expedition or TimeZero, detected
+  automatically). Each sailplan keeps its own wind grid; its port/starboard
+  symmetry must match the document.
+- **Wave correction** (v2) — import a TimeZero `Wave_Polar.xml` or a canonical
+  JSON fragment (detected automatically; the import replaces the whole
+  correction and missing factors are never filled), export the current
+  correction as a canonical JSON fragment, or remove it. Removing or adding
+  the active polar's correction immediately re-evaluates the published
+  `polars.applyWaveCorrection` path.
+- **Document** — download the complete canonical JSON.
 
-Boat name, boat type, sail number, and year are optional; leaving them blank clears
-their stored values. If supplied, the year must be a whole number. Validation
-errors appear in the form so you can correct them without losing your edits.
-
-Changing the ID replaces the former Rename action. The new ID must be unique.
-If you modify the active polar's ID, its active selection follows the new ID.
-All polar performance data (including nested v2 tables and wave correction),
-source, and notes are preserved.
-
-Administrators can make the same changes with `PUT /plugins/signalk-polar-management/polars/{id}/metadata`.
-The JSON body requires `id` and optionally accepts `name`, `boatType`, `sailnumber`,
-and integer `year`. Omitted fields are unchanged; empty strings clear text fields,
-and `null` clears the year. The existing rename API remains available for compatibility.
+API: `GET/PUT/DELETE /polars/{id}/waveCorrection`,
+`POST /polars/{id}/waveCorrection/import` (`{ "content": "..." }`),
+`POST /polars/{id}/sailplans` (`{ "content": "...", "name": "...", "id"? }`),
+`DELETE /polars/{id}/sailplans/{sailplanId}` and
+`PUT /polars/{id}/sailplans/{sailplanId}/metadata` (`{ "id"?, "name"?, "notes"? }`).
+Every mutation validates the complete updated document before saving.
+Metadata edits use the existing `PUT /polars/{id}/metadata`; the JSON body
+requires `id` and optionally accepts `name`, `boatType`, `sailnumber`, `notes`
+and integer `year` (empty strings clear text fields, `null` clears the year).
+The rename API remains available for compatibility.
 
 ## Why this is useful
 

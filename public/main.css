@@ -60,11 +60,6 @@
 .wave-unavailable > label:first-child { opacity: 0.45; }
 .wave-unavailable .switch { cursor: not-allowed; }
 
-/* ─── Hand-rolled dropdown toggle (no Bootstrap JS bundle is loaded) ───────── */
-.dropdown { position: relative; }
-.dropdown-menu { display: none; position: absolute; z-index: 1000; }
-.dropdown-menu.show { display: block; }
-
 /* ─── ORC search results spacing ───────────────────────────────────────────── */
 #orc-results { max-height: 360px; overflow-y: auto; }
 

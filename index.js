@@ -4,8 +4,9 @@ const path = require('path')
 const { validatePolar } = require('polar-format')
 const PolarStore = require('./lib/PolarStore')
 const PolarService = require('./lib/PolarService')
-const { ImportService, ImportError } = require('./lib/import/ImportService')
+const { ImportService, ImportError, autoId } = require('./lib/import/ImportService')
 const { ExportService, ExportError } = require('./lib/export/ExportService')
+const { parseWaveCorrection } = require('./lib/waveCorrection')
 const { buildCurves, DEFAULT_STEP_DEG } = require('./lib/CurveService')
 
 const ACTIVE_POLAR_PATH = 'polars.activePolar'
@@ -393,6 +394,198 @@ module.exports = (app) => {
 
     router.access('readonly').get('/internet', async (req, res) => {
       res.json({ online: await checkInternet() })
+    })
+
+    // ── Document editing: wave correction and sailplans ───────────────────────
+    // All mutations validate the complete updated document before saving; the
+    // in-memory copy is simply discarded on validation failure.
+    const loadDocument = (req, res) => {
+      try {
+        return store.get(req.params.id)
+      } catch (e) {
+        res.status(404).json({ error: e.message })
+        return null
+      }
+    }
+
+    const saveEditedDocument = (res, id, document, respond) => {
+      const validation = validatePolar(document)
+      if (!validation.valid) {
+        return res.status(400).json({ error: validation.errors.map(error => `${error.path}: ${error.message}`).join('; ') })
+      }
+      store.save(id, document)
+      if (id === settings.activePolar) refreshApplyWaveCorrection()
+      respond()
+    }
+
+    router.access('readonly').get('/polars/:id/waveCorrection', (req, res) => {
+      const document = loadDocument(req, res)
+      if (!document) return
+      if (document.kind !== 'polarSet' || !document.waveCorrection) {
+        return res.status(404).json({ error: `Polar '${req.params.id}' has no wave correction` })
+      }
+      res.json({ waveCorrection: document.waveCorrection })
+    })
+
+    router.put('/polars/:id/waveCorrection', (req, res) => {
+      const document = loadDocument(req, res)
+      if (!document) return
+      if (document.kind !== 'polarSet') {
+        return res.status(400).json({ error: 'Only v2 polarSet documents can carry a wave correction' })
+      }
+      const fragment = req.body?.waveCorrection
+      if (!fragment || typeof fragment !== 'object' || Array.isArray(fragment)) {
+        return res.status(400).json({ error: "A 'waveCorrection' object is required" })
+      }
+      document.waveCorrection = fragment
+      saveEditedDocument(res, req.params.id, document, () =>
+        res.json({ heights: Array.isArray(fragment.heights) ? fragment.heights.length : 0 }))
+    })
+
+    router.post('/polars/:id/waveCorrection/import', (req, res) => {
+      const document = loadDocument(req, res)
+      if (!document) return
+      if (document.kind !== 'polarSet') {
+        return res.status(400).json({ error: 'Only v2 polarSet documents can carry a wave correction' })
+      }
+      let fragment
+      try {
+        fragment = parseWaveCorrection(req.body?.content)
+      } catch (e) {
+        return res.status(400).json({ error: e.message })
+      }
+      document.waveCorrection = fragment
+      saveEditedDocument(res, req.params.id, document, () =>
+        res.json({ heights: fragment.heights.length }))
+    })
+
+    router.delete('/polars/:id/waveCorrection', (req, res) => {
+      const document = loadDocument(req, res)
+      if (!document) return
+      if (document.kind !== 'polarSet' || !document.waveCorrection) {
+        return res.status(404).json({ error: `Polar '${req.params.id}' has no wave correction` })
+      }
+      delete document.waveCorrection
+      saveEditedDocument(res, req.params.id, document, () => res.status(204).end())
+    })
+
+    const sailplanReferencedByBest = (document, sailplanId) => {
+      const matrixReference = (document.best.sailplanIdMatrix || []).some(row => row.includes(sailplanId))
+      const targetReference = (document.best.derived?.rows || []).some(row =>
+        ['beat', 'run'].some(role => row[role]?.sailplanId === sailplanId))
+      return matrixReference || targetReference
+    }
+
+    router.post('/polars/:id/sailplans', (req, res) => {
+      const document = loadDocument(req, res)
+      if (!document) return
+      if (document.kind !== 'polarSet') {
+        return res.status(400).json({ error: 'Only v2 polarSet documents have sailplans' })
+      }
+      const name = req.body?.name
+      if (typeof name !== 'string' || !name.trim()) {
+        return res.status(400).json({ error: "'name' is required" })
+      }
+      if (req.body?.id !== undefined && (typeof req.body.id !== 'string' || !req.body.id.trim())) {
+        return res.status(400).json({ error: "'id' must be a nonempty string, or omitted to derive it from the name" })
+      }
+      let resource
+      try {
+        resource = importService.parseTable(req.body?.content ?? '')
+      } catch (e) {
+        return res.status(e instanceof ImportError ? e.status : 500).json({ error: e.message })
+      }
+      if (!!resource.symmetry?.portStarboardSymmetric !== !!document.symmetry?.portStarboardSymmetric) {
+        return res.status(400).json({ error: 'The imported table\u2019s port/starboard symmetry does not match this document' })
+      }
+      const sailplanId = req.body?.id !== undefined ? req.body.id.trim() : autoId(name, 'sailplan')
+      if ((document.sailplans || []).some(plan => plan.id === sailplanId)) {
+        return res.status(400).json({ error: `Sailplan id '${sailplanId}' already exists` })
+      }
+      const table = {
+        axes: resource.axes,
+        values: resource.values,
+        ...(resource.derived ? { derived: resource.derived } : {})
+      }
+      document.sailplans = [...(document.sailplans || []), { id: sailplanId, name: name.trim(), table }]
+      saveEditedDocument(res, req.params.id, document, () => res.json({ id: sailplanId }))
+    })
+
+    router.delete('/polars/:id/sailplans/:sailplanId', (req, res) => {
+      const document = loadDocument(req, res)
+      if (!document) return
+      if (document.kind !== 'polarSet') {
+        return res.status(400).json({ error: 'Only v2 polarSet documents have sailplans' })
+      }
+      const sailplanId = req.params.sailplanId
+      const index = (document.sailplans || []).findIndex(plan => plan.id === sailplanId)
+      if (index === -1) {
+        return res.status(404).json({ error: `Unknown sailplan: ${sailplanId}` })
+      }
+      if (settings.activePolar === req.params.id && settings.activeSailplan === sailplanId) {
+        return res.status(409).json({ error: `Cannot delete '${sailplanId}': it is the active sailplan` })
+      }
+      if (sailplanReferencedByBest(document, sailplanId)) {
+        return res.status(409).json({ error: `Cannot delete '${sailplanId}': the best table references it as a winning sailplan` })
+      }
+      document.sailplans.splice(index, 1)
+      if (document.sailplans.length === 0) delete document.sailplans
+      saveEditedDocument(res, req.params.id, document, () => res.status(204).end())
+    })
+
+    router.put('/polars/:id/sailplans/:sailplanId/metadata', (req, res) => {
+      const document = loadDocument(req, res)
+      if (!document) return
+      if (document.kind !== 'polarSet') {
+        return res.status(400).json({ error: 'Only v2 polarSet documents have sailplans' })
+      }
+      const plan = (document.sailplans || []).find(candidate => candidate.id === req.params.sailplanId)
+      if (!plan) {
+        return res.status(404).json({ error: `Unknown sailplan: ${req.params.sailplanId}` })
+      }
+      const { id: newId, name, notes } = req.body || {}
+      if (newId !== undefined && (typeof newId !== 'string' || !newId.trim())) {
+        return res.status(400).json({ error: "'id' must be a nonempty string" })
+      }
+      if (name !== undefined && (typeof name !== 'string' || !name.trim())) {
+        return res.status(400).json({ error: "'name' must be a nonempty string" })
+      }
+      if (notes !== undefined && notes !== null && typeof notes !== 'string') {
+        return res.status(400).json({ error: "'notes' must be a string or null" })
+      }
+      const oldId = plan.id
+      const targetId = newId !== undefined ? newId.trim() : oldId
+      if (targetId !== oldId && document.sailplans.some(candidate => candidate.id === targetId)) {
+        return res.status(400).json({ error: `Sailplan id '${targetId}' already exists` })
+      }
+      plan.id = targetId
+      if (name !== undefined) plan.name = name.trim()
+      if (notes !== undefined) {
+        if (notes === null || notes === '') delete plan.notes
+        else plan.notes = notes
+      }
+      if (targetId !== oldId) {
+        // Winning references follow the rename so the document stays valid.
+        if (document.best.sailplanIdMatrix) {
+          document.best.sailplanIdMatrix = document.best.sailplanIdMatrix.map(row =>
+            row.map(cell => (cell === oldId ? targetId : cell)))
+        }
+        for (const row of document.best.derived?.rows || []) {
+          for (const role of ['beat', 'run']) {
+            if (row[role]?.sailplanId === oldId) row[role].sailplanId = targetId
+          }
+        }
+      }
+      saveEditedDocument(res, req.params.id, document, () => {
+        // The shared active-sailplan selection follows the rename, like the
+        // active polar follows a document rename.
+        if (targetId !== oldId && settings.activePolar === req.params.id && settings.activeSailplan === oldId) {
+          settings.activeSailplan = targetId
+          app.savePluginOptions(settings, () => {})
+          publishActivePolar(settings.activePolar, settings.activeSailplan)
+        }
+        res.json({ id: targetId })
+      })
     })
 
     router.access('readonly').get('/activePolar', (req, res) => {

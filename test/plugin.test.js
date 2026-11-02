@@ -116,6 +116,13 @@ describe('plugin lifecycle', () => {
           'PUT /polars/:id/metadata': 'admin',
           'POST /polars/:id/rename': 'admin',
           'GET /internet': 'readonly',
+          'GET /polars/:id/waveCorrection': 'readonly',
+          'PUT /polars/:id/waveCorrection': 'admin',
+          'POST /polars/:id/waveCorrection/import': 'admin',
+          'DELETE /polars/:id/waveCorrection': 'admin',
+          'POST /polars/:id/sailplans': 'admin',
+          'DELETE /polars/:id/sailplans/:sailplanId': 'admin',
+          'PUT /polars/:id/sailplans/:sailplanId/metadata': 'admin',
           'GET /activePolar': 'readonly',
           'PUT /activePolar': 'admin',
           'GET /performanceFactor': 'readonly',
@@ -735,6 +742,178 @@ describe('plugin lifecycle', () => {
       await assert.rejects(provider.getResource('new-id'), /not found/)
       assert.equal(request('GET /activePolar', {}).body.id, 'original')
       assert.equal(app._messages.length, count)
+    })
+  })
+
+  describe('document editing endpoints', () => {
+    let app
+    let plugin
+    let provider
+    let routes
+
+    const v1Table = () => ({
+      kind: 'polarTable', schemaVersion: '1.0.0', name: 'Storm table',
+      units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+      symmetry: { portStarboardSymmetric: true },
+      axes: { tws: [5], twa: [0, Math.PI] },
+      values: { boatSpeedMatrix: [[1, 2]] }
+    })
+
+    beforeEach(() => {
+      app = createFakeApp(dataDir)
+      plugin = createTestPlugin(app)
+      plugin.start({})
+      provider = app._registeredProviders[0].methods
+      routes = {}
+      plugin.registerWithRouter({
+        get: (route, handler) => { routes[`GET ${route}`] = handler },
+        put: (route, handler) => { routes[`PUT ${route}`] = handler },
+        post: (route, handler) => { routes[`POST ${route}`] = handler },
+        delete: (route, handler) => { routes[`DELETE ${route}`] = handler }
+      })
+    })
+
+    afterEach(() => plugin.stop())
+
+    function request(route, req = {}) {
+      let status = 200
+      let body
+      const res = {
+        status: code => { status = code; return res },
+        json: value => { body = value },
+        end: () => {}
+      }
+      routes[route]({ query: {}, ...req }, res)
+      return { status, body }
+    }
+
+    const waveValues = () => app._messages.flatMap(message =>
+      (message.delta.updates[0].values || []).filter(value => value.path === 'polars.applyWaveCorrection'))
+
+    it('imports, exports and deletes a wave correction with explicit null publication', async () => {
+      const bare = polarSet()
+      delete bare.waveCorrection
+      await provider.setResource('set', bare)
+      await provider.setResource('plain', v1Table())
+      assert.equal(request('GET /polars/:id/waveCorrection', { params: { id: 'set' } }).status, 404)
+      assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+      assert.equal(waveValues().at(-1).value, null)
+
+      const xml = fs.readFileSync(path.join(__dirname, 'fixtures', 'timezero', 'Wave_Polar.xml'), 'utf8')
+      const imported = request('POST /polars/:id/waveCorrection/import', { params: { id: 'set' }, body: { content: xml } })
+      assert.equal(imported.status, 200)
+      assert.deepEqual(imported.body, { heights: 6 })
+      assert.equal(waveValues().at(-1).value, true)
+
+      // UTF-16 content decoded as UTF-8 (NUL-padded) still imports.
+      const nulPadded = [...xml].map(character => character + '\u0000').join('')
+      assert.equal(request('POST /polars/:id/waveCorrection/import', {
+        params: { id: 'set' }, body: { content: nulPadded }
+      }).status, 200)
+
+      const exported = request('GET /polars/:id/waveCorrection', { params: { id: 'set' } })
+      assert.equal(exported.status, 200)
+      const { waveCorrection } = exported.body
+      assert.deepEqual(waveCorrection.heights.map(layer => layer.significantWaveHeight), [0, 0.5, 2, 5, 10, 15])
+      assert.ok(Math.abs(waveCorrection.heights[0].axes.waveAngle.at(-1) - Math.PI) < 1e-12)
+      assert.ok(waveCorrection.heights[0].values.speedFactorMatrix.every(row => row.every(factor => factor === 1)))
+
+      // Canonical JSON fragments round-trip through PUT and import.
+      assert.equal(request('PUT /polars/:id/waveCorrection', {
+        params: { id: 'set' }, body: { waveCorrection }
+      }).status, 200)
+      assert.equal(request('POST /polars/:id/waveCorrection/import', {
+        params: { id: 'set' }, body: { content: JSON.stringify({ waveCorrection }) }
+      }).status, 200)
+
+      // Invalid fragments are rejected and leave the document unchanged.
+      const broken = structuredClone(waveCorrection)
+      broken.heights[0].values.speedFactorMatrix[0][0] = 0.5
+      const rejected = request('PUT /polars/:id/waveCorrection', { params: { id: 'set' }, body: { waveCorrection: broken } })
+      assert.equal(rejected.status, 400)
+      assert.deepEqual((await provider.getResource('set')).waveCorrection, waveCorrection)
+
+      assert.equal(request('DELETE /polars/:id/waveCorrection', { params: { id: 'set' } }).status, 204)
+      assert.equal(request('GET /polars/:id/waveCorrection', { params: { id: 'set' } }).status, 404)
+      assert.equal(waveValues().at(-1).value, null)
+      assert.equal(request('DELETE /polars/:id/waveCorrection', { params: { id: 'set' } }).status, 404)
+
+      // v1 documents can never carry a wave correction.
+      assert.equal(request('PUT /polars/:id/waveCorrection', { params: { id: 'plain' }, body: { waveCorrection } }).status, 400)
+      assert.equal(request('POST /polars/:id/waveCorrection/import', { params: { id: 'plain' }, body: { content: xml } }).status, 400)
+      assert.equal(request('GET /polars/:id/waveCorrection', { params: { id: 'plain' } }).status, 404)
+    })
+
+    it('edits polar notes through the metadata endpoint', async () => {
+      await provider.setResource('plain', v1Table())
+      assert.equal(request('PUT /polars/:id/metadata', {
+        params: { id: 'plain' }, body: { id: 'plain', notes: 'Fresh notes' }
+      }).status, 200)
+      assert.equal((await provider.getResource('plain')).notes, 'Fresh notes')
+      assert.equal(request('PUT /polars/:id/metadata', {
+        params: { id: 'plain' }, body: { id: 'plain', notes: '' }
+      }).status, 200)
+      assert.equal(Object.hasOwn(await provider.getResource('plain'), 'notes'), false)
+    })
+
+    it('imports, edits and deletes sailplans with strict reference handling', async () => {
+      await provider.setResource('set', polarSet())
+      await provider.setResource('plain', v1Table())
+
+      // 'jib' is referenced by best's winning-sailplan data: deletion is rejected.
+      const referenced = request('DELETE /polars/:id/sailplans/:sailplanId', { params: { id: 'set', sailplanId: 'jib' } })
+      assert.equal(referenced.status, 409)
+      assert.match(referenced.body.error, /references it/)
+
+      // Import a new sailplan from canonical v1 single-table content.
+      const added = request('POST /polars/:id/sailplans', {
+        params: { id: 'set' }, body: { content: JSON.stringify(v1Table()), name: 'Storm set' }
+      })
+      assert.equal(added.status, 200)
+      assert.deepEqual(added.body, { id: 'storm-set' })
+      const stored = await provider.getResource('set')
+      const storm = stored.sailplans.find(plan => plan.id === 'storm-set')
+      assert.equal(storm.name, 'Storm set')
+      assert.deepEqual(storm.table, { axes: v1Table().axes, values: v1Table().values })
+      assert.equal(request('POST /polars/:id/sailplans', {
+        params: { id: 'set' }, body: { content: JSON.stringify(v1Table()), name: 'Storm set' }
+      }).status, 400)
+
+      // Sailplan metadata edits, including an id rename that updates best's
+      // winning references and follows the shared active selection.
+      assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: 'jib', acknowledgeV2: true } }).status, 200)
+      const renamed = request('PUT /polars/:id/sailplans/:sailplanId/metadata', {
+        params: { id: 'set', sailplanId: 'jib' }, body: { id: 'headsail', name: 'Headsail', notes: 'Renamed' }
+      })
+      assert.equal(renamed.status, 200)
+      assert.deepEqual(renamed.body, { id: 'headsail' })
+      const updated = await provider.getResource('set')
+      assert.equal(updated.sailplans.find(plan => plan.id === 'headsail').notes, 'Renamed')
+      assert.equal(updated.best.sailplanIdMatrix[0][0], 'headsail')
+      assert.equal(updated.best.derived.rows[0].beat.sailplanId, 'headsail')
+      assert.equal(request('GET /activePolar', {}).body.sailplanId, 'headsail')
+      assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
+        { path: 'polars.activePolar', value: { href: '/resources/polars/set', sailplanId: 'headsail' } }
+      ])
+
+      // The active sailplan cannot be deleted; unreferenced inactive ones can.
+      const active = request('DELETE /polars/:id/sailplans/:sailplanId', { params: { id: 'set', sailplanId: 'headsail' } })
+      assert.equal(active.status, 409)
+      assert.match(active.body.error, /active sailplan/)
+      assert.equal(request('DELETE /polars/:id/sailplans/:sailplanId', { params: { id: 'set', sailplanId: 'storm-set' } }).status, 204)
+      assert.equal((await provider.getResource('set')).sailplans.some(plan => plan.id === 'storm-set'), false)
+      assert.equal(request('DELETE /polars/:id/sailplans/:sailplanId', { params: { id: 'set', sailplanId: 'storm-set' } }).status, 404)
+
+      // Duplicate ids and v1 targets are rejected.
+      assert.equal(request('PUT /polars/:id/sailplans/:sailplanId/metadata', {
+        params: { id: 'set', sailplanId: 'headsail' }, body: { id: 'headsail', name: 'Headsail' }
+      }).status, 200)
+      assert.equal(request('POST /polars/:id/sailplans', {
+        params: { id: 'plain' }, body: { content: JSON.stringify(v1Table()), name: 'Nope' }
+      }).status, 400)
+      assert.equal(request('POST /polars/:id/sailplans', {
+        params: { id: 'set' }, body: { content: JSON.stringify(polarSet()), name: 'Nope' }
+      }).status, 400)
     })
   })
 })
