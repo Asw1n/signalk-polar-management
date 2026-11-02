@@ -8,6 +8,9 @@
 ### Changed
 - Prepare calculation data only for the active polar and specifically requested polars, avoiding startup work and memory use for unused stored tables.
 
+### Fixed
+- Register the `polars` resource provider before publishing the active polar at start, so a plugin that loads the polar as soon as `polars.activePolar` arrives no longer fails with `No provider for polars`.
+
 ## 1.4.0 - 2026-10-29
 
 ### Added

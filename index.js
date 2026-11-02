@@ -128,15 +128,8 @@ module.exports = (app) => {
     importService = new ImportService(store)
     exportService = new ExportService()
 
-    publishMetadata()
-    publishPerformanceFactor(settings.performanceFactor)
-
-    if (settings.activePolar && store.exists(settings.activePolar)) {
-      publishActivePolar(settings.activePolar)
-    } else if (settings.activePolar) {
-      app.setPluginError(`Configured active polar '${settings.activePolar}' was not found`)
-    }
-
+    // Register before publishing: a consumer that loads the active polar as
+    // soon as its delta arrives must find the provider already there.
     app.registerResourceProvider({
       type: RESOURCE_TYPE,
       methods: {
@@ -163,6 +156,15 @@ module.exports = (app) => {
         }
       }
     })
+
+    publishMetadata()
+    publishPerformanceFactor(settings.performanceFactor)
+
+    if (settings.activePolar && store.exists(settings.activePolar)) {
+      publishActivePolar(settings.activePolar)
+    } else if (settings.activePolar) {
+      app.setPluginError(`Configured active polar '${settings.activePolar}' was not found`)
+    }
 
     app.setPluginStatus(`Managing ${store.list().length} polar(s)`)
     polarService = new PolarService(store, () => settings, (message) => app.setPluginError(message))

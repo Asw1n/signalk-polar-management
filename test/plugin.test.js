@@ -6,6 +6,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const pluginFactory = require('../index')
+const PolarStore = require('../lib/PolarStore')
 
 function withRoutePolicies(router) {
   if (router.routePolicies instanceof Map) return router
@@ -182,6 +183,32 @@ describe('plugin lifecycle', () => {
     plugin.start({})
     assert.equal(app._registeredProviders.length, 1)
     assert.equal(app._registeredProviders[0].type, 'polars')
+    plugin.stop()
+  })
+
+  it('registers the resource provider before it publishes the active polar', async () => {
+    new PolarStore(path.join(dataDir, 'polars')).save('boat', {
+      kind: 'polarTable', schemaVersion: '1.0.0', name: 'Boat',
+      units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+      symmetry: { portStarboardSymmetric: true },
+      axes: { tws: [5], twa: [0, Math.PI] },
+      values: { boatSpeedMatrix: [[1, 2]] }
+    })
+    const app = createFakeApp(dataDir)
+    let loaded
+    const handleMessage = app.handleMessage
+    app.handleMessage = (source, delta) => {
+      handleMessage(source, delta)
+      const value = delta.updates[0].values?.find(item => item.path === 'polars.activePolar')?.value
+      // Load it the moment the delta arrives, as a subscribed consumer would.
+      if (value) loaded = app._registeredProviders[0]?.methods.getResource(value.href.split('/').pop())
+    }
+    const plugin = createTestPlugin(app)
+
+    plugin.start({ activePolar: 'boat' })
+
+    assert.ok(loaded, 'the active polar was published with no provider registered')
+    assert.equal((await loaded).name, 'Boat')
     plugin.stop()
   })
 
