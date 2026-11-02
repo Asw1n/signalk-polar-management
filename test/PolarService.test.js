@@ -124,6 +124,25 @@ describe('live polar service', () => {
     assert.deepEqual(errors, [])
   })
 
+  it('applies the shared wave-correction toggle to active handles only', () => {
+    store.save('set', polarSet())
+    if (typeof Polar.fromPolarSet !== 'function') return
+    settings.activePolar = 'set'
+    service.notify({ type: 'selection' })
+    const active = service.api.activePolar()
+    const input = { tws: 4, twa: Math.PI / 3, seaState: { significantWaveHeight: 1, wavePeriod: 5, waveAngle: 0 } }
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.8 * 0.9) < 1e-12)
+    settings.applyWaveCorrection = false
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.9) < 1e-12)
+    // Specific handles ignore shared settings: supplied seaState is always
+    // applied, omitted seaState never is.
+    const specific = service.api.polar('set')
+    assert.ok(Math.abs(specific.speedAt(input).value - 1.6) < 1e-12)
+    assert.equal(specific.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 2)
+    settings.applyWaveCorrection = true
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.8 * 0.9) < 1e-12)
+  })
+
   it('supports fixed-sailplan handles and reports unknown sailplans explicitly', () => {
     const document = polarSet()
     document.sailplans[0].table.values.boatSpeedMatrix[0][0] = 2.5

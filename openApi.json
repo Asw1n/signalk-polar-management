@@ -316,6 +316,28 @@
         }
       }
     },
+    "/waveCorrection": {
+      "get": {
+        "operationId": "getWaveCorrection",
+        "summary": "Get whether polar consumers apply the active document's wave correction",
+        "responses": {
+          "200": { "description": "Shared wave-correction toggle; true means a present waveCorrection table is applied when sea state is supplied. It has no effect on documents without one.", "content": { "application/json": { "schema": { "type": "object", "properties": { "apply": { "type": "boolean" } }, "required": ["apply"] } } } }
+        }
+      },
+      "put": {
+        "operationId": "setWaveCorrection",
+        "summary": "Set the shared wave-correction toggle; publishes vessels.self.polars.applyWaveCorrection for use by other plugins",
+        "description": "Default is true. When false, active-polar in-process calculation handles ignore supplied sea state, so the active document's wave correction is not applied. Specific-polar handles are unaffected; their consumers control wave correction by supplying or omitting sea state. The webapp curve display never applies wave correction and is unaffected.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "apply": { "type": "boolean" } }, "required": ["apply"] } } }
+        },
+        "responses": {
+          "200": { "description": "Toggle set", "content": { "application/json": { "schema": { "type": "object", "properties": { "apply": { "type": "boolean" } }, "required": ["apply"] } } } },
+          "400": { "description": "Not a boolean", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/imports/formats": {
       "get": {
         "operationId": "listImportFormats",

@@ -10,7 +10,9 @@ const { buildCurves, DEFAULT_STEP_DEG } = require('./lib/CurveService')
 
 const ACTIVE_POLAR_PATH = 'polars.activePolar'
 const PERFORMANCE_FACTOR_PATH = 'polars.performanceFactor'
+const APPLY_WAVE_CORRECTION_PATH = 'polars.applyWaveCorrection'
 const DEFAULT_PERFORMANCE_FACTOR = 1
+const DEFAULT_APPLY_WAVE_CORRECTION = true
 const RESOURCE_TYPE = 'polars'
 
 module.exports = (app) => {
@@ -21,6 +23,7 @@ module.exports = (app) => {
   let polarService = null
   let activePolarPublished = false
   let performanceFactorPublished = false
+  let applyWaveCorrectionPublished = false
 
   const plugin = {
     id: 'signalk-polar-management',
@@ -91,6 +94,16 @@ module.exports = (app) => {
               // Only emitted on change, not periodically -> exempt from stale-data timeout.
               updateContract: 'event'
             }
+          },
+          {
+            path: APPLY_WAVE_CORRECTION_PATH,
+            value: {
+              type: 'boolean',
+              displayName: 'Apply wave correction',
+              description: 'Whether polar consumers should apply the active document\'s wave correction; no effect when the document has none.',
+              // Only emitted on change, not periodically -> exempt from stale-data timeout.
+              updateContract: 'event'
+            }
           }
         ]
       }]
@@ -136,16 +149,34 @@ module.exports = (app) => {
     performanceFactorPublished = false
   }
 
+  function publishApplyWaveCorrection(value) {
+    app.handleMessage(plugin.id, {
+      updates: [{ values: [{ path: APPLY_WAVE_CORRECTION_PATH, value }] }]
+    })
+    applyWaveCorrectionPublished = true
+    polarService?.notify({ type: 'waveCorrection' })
+  }
+
+  function clearApplyWaveCorrection() {
+    if (!applyWaveCorrectionPublished) return
+    app.handleMessage(plugin.id, {
+      updates: [{ values: [{ path: APPLY_WAVE_CORRECTION_PATH, value: null }] }]
+    })
+    applyWaveCorrectionPublished = false
+  }
+
   plugin.start = (options) => {
     if (polarService) plugin.stop()
-    settings = { activePolar: '', activeSailplan: '', performanceFactor: DEFAULT_PERFORMANCE_FACTOR, ...options }
+    settings = { activePolar: '', activeSailplan: '', performanceFactor: DEFAULT_PERFORMANCE_FACTOR, applyWaveCorrection: DEFAULT_APPLY_WAVE_CORRECTION, ...options }
     settings.performanceFactor = sanitizePerformanceFactor(settings.performanceFactor)
     if (typeof settings.activeSailplan !== 'string') settings.activeSailplan = ''
+    if (typeof settings.applyWaveCorrection !== 'boolean') settings.applyWaveCorrection = DEFAULT_APPLY_WAVE_CORRECTION
     store = new PolarStore(path.join(app.getDataDirPath(), 'polars'))
     importService = new ImportService(store)
     exportService = new ExportService()
 
     publishMetadata()
+    publishApplyWaveCorrection(settings.applyWaveCorrection)
     publishPerformanceFactor(settings.performanceFactor)
 
     if (settings.activePolar && store.exists(settings.activePolar)) {
@@ -195,6 +226,7 @@ module.exports = (app) => {
       app.emitPropertyValue('polarManagement', { apiVersion: 1, available: false })
     }
     clearActivePolar()
+    clearApplyWaveCorrection()
     clearPerformanceFactor()
     store = null
     importService = null
@@ -419,6 +451,23 @@ module.exports = (app) => {
         settings.performanceFactor = nextSettings.performanceFactor
         publishPerformanceFactor(settings.performanceFactor)
         res.json({ value: settings.performanceFactor })
+      })
+    })
+
+    router.access('readonly').get('/waveCorrection', (req, res) => {
+      res.json({ apply: settings.applyWaveCorrection })
+    })
+
+    router.put('/waveCorrection', (req, res) => {
+      if (typeof req.body?.apply !== 'boolean') {
+        return res.status(400).json({ error: "'apply' must be a boolean" })
+      }
+      const nextSettings = { ...settings, applyWaveCorrection: req.body.apply }
+      app.savePluginOptions(nextSettings, (err) => {
+        if (err) return res.status(500).json({ error: err.message })
+        settings.applyWaveCorrection = nextSettings.applyWaveCorrection
+        publishApplyWaveCorrection(settings.applyWaveCorrection)
+        res.json({ apply: settings.applyWaveCorrection })
       })
     })
 

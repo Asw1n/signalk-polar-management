@@ -120,6 +120,8 @@ describe('plugin lifecycle', () => {
           'PUT /activePolar': 'admin',
           'GET /performanceFactor': 'readonly',
           'PUT /performanceFactor': 'admin',
+          'GET /waveCorrection': 'readonly',
+          'PUT /waveCorrection': 'admin',
           'GET /imports/formats': 'readonly',
           'POST /imports/text/:format': 'admin',
           'GET /imports/sources': 'readonly',
@@ -196,6 +198,7 @@ describe('plugin lifecycle', () => {
 
     assert.ok(meta.some(item => item.path === 'polars.activePolar'))
     assert.ok(meta.some(item => item.path === 'polars.performanceFactor'))
+    assert.ok(meta.some(item => item.path === 'polars.applyWaveCorrection'))
     plugin.stop()
   })
 
@@ -349,7 +352,7 @@ describe('plugin lifecycle', () => {
           await provider.deleteResource('renamed')
           await assert.rejects(provider.getResource('renamed'), /not found/)
           assert.ok(app._messages.every(message => (message.delta.updates[0].values || []).every(value =>
-            ['polars.activePolar', 'polars.performanceFactor'].includes(value.path))))
+            ['polars.activePolar', 'polars.performanceFactor', 'polars.applyWaveCorrection'].includes(value.path))))
         } finally {
           plugin.stop()
         }
@@ -491,6 +494,56 @@ describe('plugin lifecycle', () => {
           const pointerValues = app._messages.flatMap(message =>
             (message.delta.updates[0].values || []).filter(value => value.path === 'polars.activePolar'))
           assert.equal(pointerValues.at(-1).value, null)
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('publishes, persists, applies and clears the shared wave-correction toggle', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const waveValues = () => app._messages.flatMap(message =>
+            (message.delta.updates[0].values || []).filter(value => value.path === 'polars.applyWaveCorrection'))
+          assert.equal(waveValues().at(-1).value, true)
+          await app._registeredProviders[0].methods.setResource('set', polarSet())
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          assert.deepEqual(request('GET /waveCorrection').body, { apply: true })
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+          const active = app._propertyHistory.at(-1).value.activePolar()
+          const input = { tws: 4, twa: Math.PI / 3, seaState: { significantWaveHeight: 1, wavePeriod: 5, waveAngle: 0 } }
+          if (typeof Polar.fromPolarSet === 'function') {
+            assert.ok(Math.abs(active.speedAt(input).value - 1.6) < 1e-12)
+          }
+          const off = request('PUT /waveCorrection', { body: { apply: false } })
+          assert.equal(off.status, 200)
+          assert.deepEqual(off.body, { apply: false })
+          assert.equal(app._savedOptions.at(-1).applyWaveCorrection, false)
+          assert.equal(waveValues().at(-1).value, false)
+          if (typeof Polar.fromPolarSet === 'function') {
+            assert.equal(active.speedAt(input).value, 2)
+          }
+          assert.equal(request('PUT /waveCorrection', { body: { apply: 'yes' } }).status, 400)
+          assert.equal(request('PUT /waveCorrection', { body: {} }).status, 400)
+          assert.deepEqual(request('GET /waveCorrection').body, { apply: false })
+          plugin.stop()
+          assert.equal(waveValues().at(-1).value, null)
+          // The persisted toggle is restored and republished on restart.
+          plugin.start({ applyWaveCorrection: false })
+          assert.equal(waveValues().at(-1).value, false)
         } finally {
           plugin.stop()
         }

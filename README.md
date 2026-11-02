@@ -59,6 +59,16 @@ The UI's local display/export table choices remain independent of the shared
 selection. Handle lifecycle, factors, caching and change-notification
 contracts are unchanged.
 
+A v2 document may carry an optional vessel-wide `waveCorrection` table. The
+shared toggle at `vessels.self.polars.applyWaveCorrection` (default **on**,
+`GET/PUT /waveCorrection` with `{ "apply": true|false }`) controls whether
+active-polar consumers apply it: when off, active in-process handles ignore
+supplied sea state. The toggle persists across restarts and polar changes and
+simply has no effect on documents without a wave correction table. The webapp
+curve display never applies wave correction. Specific `polar(id)` handles are
+completely independent of shared settings; their consumers control wave
+correction per call by supplying or omitting sea state.
+
 ## Import an ORC speed-guide HTML file
 
 Use **Import from file** and select the downloaded HTML guide. It participates

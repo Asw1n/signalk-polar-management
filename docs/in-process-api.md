@@ -17,10 +17,20 @@ The service contract has `apiVersion: 1`.
   v2 document-local sailplan; omit `sailplanId` for best. It must be a nonempty
   string. An unknown or v1-incompatible sailplan yields `sailplan_not_found`
   results, never a fallback to best.
+- The two handle types differ deliberately. **Active handles mirror every
+  shared setting per call** — active polar, active sailplan, performance factor
+  and the wave-correction toggle — and none of them can be overridden; changes
+  apply between calls. **Specific handles are completely independent of shared
+  settings**: their consumer chooses the document, sailplan and factor at
+  acquisition, and controls wave correction per call by supplying or omitting
+  `seaState`. The shared wave-correction toggle never affects them.
 - Canonical v1 documents keep their table behavior. V2 documents select the
   table with `Polar.fromPolarSet`. Active handles follow the **shared active
   sailplan** on every calculation call: it defaults to best, is set together
   with the active polar, and resets to best whenever the active polar changes.
+  Active handles also honor the **shared wave-correction toggle** (default on):
+  when off, supplied `seaState` is dropped before reaching math, so a present
+  `waveCorrection` table is not applied. Specific handles never drop `seaState`.
   Local display/export table choices never change a handle or the shared
   active pointer.
   Complete root context, including wave correction, is passed to math, not
@@ -171,6 +181,7 @@ relevant change and receive a frozen `{ type, ids }` event:
 | --- | --- |
 | `selection` | Active selection (polar or shared sailplan) was published or cleared |
 | `performanceFactor` | Shared factor was published |
+| `waveCorrection` | Shared wave-correction toggle was published |
 | `saved` | Table created or replaced, including resource writes and imports |
 | `modified` | Metadata changed, possibly including its ID |
 | `renamed` | Storage ID changed through the rename API |
@@ -178,10 +189,11 @@ relevant change and receive a frozen `{ type, ids }` event:
 | `deleted` | Table deleted |
 | `stopped` | Provider stopped; handles are already unavailable |
 
-`ids` contains affected storage IDs, or is empty for selection, shared factor
-and stop events. Specific handles receive only events affecting their ID, plus
+`ids` contains affected storage IDs, or is empty for selection, shared factor,
+wave-correction toggle and stop events. Specific handles receive only events
+affecting their ID, plus
 stop. Active handles receive changes affecting the current active ID, selection,
-shared factor and stop events.
+shared factor, wave-correction toggle and stop events.
 
 A compound operation, such as renaming the active polar and saving its new
 selection, can generate multiple events. Notifications describe completed

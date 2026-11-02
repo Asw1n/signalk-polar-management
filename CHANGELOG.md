@@ -9,6 +9,7 @@
 - Local best/sailplan table display and curve selection, plus explicitly acknowledged selected-table exports (Expedition, Jieter or lossy canonical v1 projection). Incompatible missing speeds are rejected rather than filled.
 - Explicit v2 active-document acknowledgment to protect consumer rollout.
 - Shared sailplan selection for an active v2 polar: pick best (default) or a named sailplan together with the active polar. The choice is published with the active-polar pointer, persists across restarts, resets to best when the active polar changes, and is followed automatically by live calculation handles. A sailplan that disappears from the document makes the selection explicitly invalid; it never silently falls back to best.
+- Shared wave-correction toggle (default on): choose whether consumers apply a v2 polar's optional wave correction. The setting is published to Signal K, persists across restarts and polar changes, has no effect on polars without a wave correction table, and never affects the webapp curve display. Active-polar calculation handles honor it automatically; specific-polar handles are independent of it and of all other shared settings.
 
 ### Changed
 - Prepare calculation data only for the active polar and specifically requested polars, avoiding startup work and memory use for unused stored tables.
