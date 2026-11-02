@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.1 - 2026-11-02
+
+### Fixed
+- Register the `polars` resource provider before publishing the active polar at start, so a plugin that loads the polar as soon as `polars.activePolar` arrives no longer fails with `No provider for polars`.
+
 ## 1.5.0 - 2026-11-02
 
 ### Added
@@ -22,9 +27,6 @@
 - Use published `polar-format` 2 for both document versions. No automatic migration or package version change.
 - V2 curves use the agreed `Polar.fromPolarSet` API when available. Published `polar-math` 1.1.1 remains pinned by the existing dependency range and cannot render v2: return an explicit 503 until a compatible release is selected. Integration verification uses an isolated immutable unreleased math commit, not a local link or production dependency.
 - Preserve the newly merged in-process live-handle API: active v2 handles follow the shared sailplan selection (best by default) on every call, and specific handles can fix a sailplan; local table display never changes handles. Unsupported math returns an explicit `unsupported_math` result and plugin error.
-
-### Fixed
-- Register the `polars` resource provider before publishing the active polar at start, so a plugin that loads the polar as soon as `polars.activePolar` arrives no longer fails with `No provider for polars`.
 
 ## 1.4.0 - 2026-10-29
 
