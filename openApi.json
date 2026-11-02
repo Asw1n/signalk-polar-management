@@ -265,30 +265,31 @@
     "/activePolar": {
       "get": {
         "operationId": "getActivePolar",
-        "summary": "Get the currently active polar id and its validity",
+        "summary": "Get the currently active polar id, shared sailplan selection and their validity",
         "responses": {
           "200": {
-            "description": "Active polar status",
+            "description": "Active polar status. sailplanId is null for best and for v1 documents. A configured sailplan missing from the active document makes the selection invalid; it never falls back to best.",
             "content": { "application/json": { "schema": { "type": "object", "properties": {
               "id": { "type": "string", "nullable": true },
+              "sailplanId": { "type": "string", "nullable": true },
               "exists": { "type": "boolean" },
               "valid": { "type": "boolean" },
               "errors": { "type": "array", "items": { "type": "string" } }
-            }, "required": ["id", "exists", "valid", "errors"] } } }
+            }, "required": ["id", "sailplanId", "exists", "valid", "errors"] } } }
           }
         }
       },
       "put": {
         "operationId": "setActivePolar",
-        "summary": "Set the active document id; publishes the unchanged vessels.self.polars.activePolar resource pointer",
-        "description": "Selects a complete document, never a local display/export sailplan. V2 requires acknowledgeV2=true after ensuring every active-polar consumer supports v2. No capability detection or shared active-sailplan path is provided.",
+        "summary": "Set the active document id and shared sailplan; publishes the vessels.self.polars.activePolar pointer",
+        "description": "Selects a complete document and, for v2, the shared active sailplan used by every active-polar consumer. Omit sailplanId (or send null) for best; v2 selection resets to best whenever it is omitted. sailplanId must name an existing document-local sailplan and is rejected for v1 documents; unknown IDs are errors, not fallbacks. V2 requires acknowledgeV2=true after ensuring every active-polar consumer supports v2. The published pointer value is { href } plus sailplanId only when a sailplan is selected. Local display/export table choices remain independent of this shared selection. No capability detection is provided.",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "nullable": true }, "acknowledgeV2": { "type": "boolean" } } } } }
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "nullable": true }, "sailplanId": { "type": "string", "nullable": true, "minLength": 1 }, "acknowledgeV2": { "type": "boolean" } } } } }
         },
         "responses": {
-          "200": { "description": "Active polar set", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "nullable": true } } } } } },
-          "400": { "description": "Invalid id or document", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "200": { "description": "Active polar set", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string", "nullable": true }, "sailplanId": { "type": "string", "nullable": true } } } } } },
+          "400": { "description": "Invalid id, document or sailplan selection", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "409": { "description": "V2 consumer-rollout acknowledgment required", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "404": { "description": "Polar not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }

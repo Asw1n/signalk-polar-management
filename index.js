@@ -38,6 +38,20 @@ module.exports = (app) => {
     return Number.isFinite(factor) && factor >= 0 && factor <= 1
   }
 
+  // '' / null / undefined mean best. Returns an error string when the configured
+  // sailplan cannot be used with the document; selection is strict, never a
+  // silent fallback to best.
+  function activeSailplanError(document, sailplanId, id) {
+    if (!sailplanId) return null
+    if (document.kind !== 'polarSet') {
+      return `Active sailplan '${sailplanId}' is configured but '${id}' is a v1 document without sailplans`
+    }
+    if (!(document.sailplans || []).some(plan => plan.id === sailplanId)) {
+      return `Active sailplan '${sailplanId}' was not found in '${id}'`
+    }
+    return null
+  }
+
   // Lightweight internet connectivity probe (mirrors signalk-polar-performance-plugin).
   // Attempts a HEAD request to Cloudflare's public DNS (1.1.1.1) with a 3s timeout.
   async function checkInternet() {
@@ -62,7 +76,7 @@ module.exports = (app) => {
             value: {
               type: 'object',
               displayName: 'Active polar',
-              description: 'Pointer to the selected polar resource.',
+              description: 'Pointer to the selected polar resource and, for v2 documents, the shared sailplan selection (absent for best).',
               // Only emitted on change, not periodically -> exempt from stale-data timeout.
               updateContract: 'event'
             }
@@ -83,8 +97,10 @@ module.exports = (app) => {
     })
   }
 
-  function publishActivePolar(id) {
-    const value = id ? { href: `/resources/${RESOURCE_TYPE}/${id}` } : null
+  function publishActivePolar(id, sailplanId) {
+    const value = id
+      ? { href: `/resources/${RESOURCE_TYPE}/${id}`, ...(sailplanId ? { sailplanId } : {}) }
+      : null
     app.handleMessage(plugin.id, {
       updates: [{ values: [{ path: ACTIVE_POLAR_PATH, value }] }]
     })
@@ -122,8 +138,9 @@ module.exports = (app) => {
 
   plugin.start = (options) => {
     if (polarService) plugin.stop()
-    settings = { activePolar: '', performanceFactor: DEFAULT_PERFORMANCE_FACTOR, ...options }
+    settings = { activePolar: '', activeSailplan: '', performanceFactor: DEFAULT_PERFORMANCE_FACTOR, ...options }
     settings.performanceFactor = sanitizePerformanceFactor(settings.performanceFactor)
+    if (typeof settings.activeSailplan !== 'string') settings.activeSailplan = ''
     store = new PolarStore(path.join(app.getDataDirPath(), 'polars'))
     importService = new ImportService(store)
     exportService = new ExportService()
@@ -132,7 +149,9 @@ module.exports = (app) => {
     publishPerformanceFactor(settings.performanceFactor)
 
     if (settings.activePolar && store.exists(settings.activePolar)) {
-      publishActivePolar(settings.activePolar)
+      const sailplanError = activeSailplanError(store.get(settings.activePolar), settings.activeSailplan, settings.activePolar)
+      if (sailplanError) app.setPluginError(sailplanError)
+      else publishActivePolar(settings.activePolar, settings.activeSailplan)
     } else if (settings.activePolar) {
       app.setPluginError(`Configured active polar '${settings.activePolar}' was not found`)
     }
@@ -292,7 +311,7 @@ module.exports = (app) => {
           return res.status(500).json({ error: `Could not save active polar selection: ${err.message}` })
         }
         settings.activePolar = newId
-        publishActivePolar(newId)
+        publishActivePolar(newId, settings.activeSailplan)
         res.json({ id: newId })
       })
     })
@@ -307,7 +326,7 @@ module.exports = (app) => {
         if (settings.activePolar === req.params.id) {
           settings.activePolar = newId
           app.savePluginOptions(settings, () => {})
-          publishActivePolar(newId)
+          publishActivePolar(newId, settings.activeSailplan)
         }
         res.json({ id: newId })
       } catch (e) {
@@ -321,25 +340,40 @@ module.exports = (app) => {
 
     router.access('readonly').get('/activePolar', (req, res) => {
       const id = settings.activePolar || null
+      const sailplanId = settings.activeSailplan || null
       if (!id) {
-        return res.json({ id: null, exists: false, valid: false, errors: [] })
+        return res.json({ id: null, sailplanId: null, exists: false, valid: false, errors: [] })
       }
       if (!store.exists(id)) {
-        return res.json({ id, exists: false, valid: false, errors: [`Configured active polar '${id}' was not found`] })
+        return res.json({ id, sailplanId, exists: false, valid: false, errors: [`Configured active polar '${id}' was not found`] })
       }
-      const result = validatePolar(store.get(id))
+      const document = store.get(id)
+      const result = validatePolar(document)
+      const errors = result.valid ? [] : result.errors.map(e => `${e.path}: ${e.message}`)
+      if (result.valid) {
+        const sailplanError = activeSailplanError(document, sailplanId, id)
+        if (sailplanError) errors.push(sailplanError)
+      }
       res.json({
         id,
+        sailplanId,
         exists: true,
-        valid: result.valid,
-        errors: result.valid ? [] : result.errors.map(e => `${e.path}: ${e.message}`)
+        valid: errors.length === 0,
+        errors
       })
     })
 
     router.put('/activePolar', (req, res) => {
       const id = req.body?.id
+      const sailplanId = req.body?.sailplanId
       if (id !== undefined && id !== null && typeof id !== 'string') {
         return res.status(400).json({ error: "'id' must be a string or null" })
+      }
+      if (sailplanId !== undefined && sailplanId !== null && (typeof sailplanId !== 'string' || !sailplanId.trim())) {
+        return res.status(400).json({ error: "'sailplanId' must be a nonempty string, or omitted/null for best" })
+      }
+      if (!id && sailplanId) {
+        return res.status(400).json({ error: "'sailplanId' requires an active polar 'id'" })
       }
       if (id && !store.exists(id)) {
         return res.status(404).json({ error: `Polar not found: ${id}` })
@@ -352,17 +386,22 @@ module.exports = (app) => {
         }
         if (document.kind === 'polarSet' && req.body?.acknowledgeV2 !== true) {
           return res.status(409).json({
-            error: 'Activating v2 requires acknowledgeV2: true after verifying all active-polar consumers support polarSet v2. This pointer selects the complete document, not a local display sailplan.'
+            error: 'Activating v2 requires acknowledgeV2: true after verifying all active-polar consumers support polarSet v2. This pointer selects the complete document and the shared active sailplan (omit sailplanId for best).'
           })
         }
+        const sailplanError = activeSailplanError(document, sailplanId, id)
+        if (sailplanError) {
+          return res.status(400).json({ error: sailplanError })
+        }
       }
-      const nextSettings = { ...settings, activePolar: id || '' }
+      const nextSettings = { ...settings, activePolar: id || '', activeSailplan: (id && sailplanId) || '' }
       app.savePluginOptions(nextSettings, (err) => {
         if (err) return res.status(500).json({ error: err.message })
         settings.activePolar = nextSettings.activePolar
-        if (id) publishActivePolar(id)
+        settings.activeSailplan = nextSettings.activeSailplan
+        if (id) publishActivePolar(id, settings.activeSailplan)
         else clearActivePolar()
-        res.json({ id: settings.activePolar || null })
+        res.json({ id: settings.activePolar || null, sailplanId: settings.activeSailplan || null })
       })
     })
 

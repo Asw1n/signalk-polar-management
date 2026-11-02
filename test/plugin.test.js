@@ -6,6 +6,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const pluginFactory = require('../index')
+const { Polar } = require('polar-math')
 const { polarSet } = require('./fixtures/polarSet')
 
 function withRoutePolicies(router) {
@@ -349,6 +350,147 @@ describe('plugin lifecycle', () => {
           await assert.rejects(provider.getResource('renamed'), /not found/)
           assert.ok(app._messages.every(message => (message.delta.updates[0].values || []).every(value =>
             ['polars.activePolar', 'polars.performanceFactor'].includes(value.path))))
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('activates, publishes, persists and resets a shared v2 sailplan selection', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const document = polarSet()
+          document.sailplans[0].table.values.boatSpeedMatrix[0][0] = 2.5
+          await app._registeredProviders[0].methods.setResource('set', document)
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          const activated = request('PUT /activePolar', { body: { id: 'set', sailplanId: 'jib', acknowledgeV2: true } })
+          assert.equal(activated.status, 200)
+          assert.deepEqual(activated.body, { id: 'set', sailplanId: 'jib' })
+          assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
+            { path: 'polars.activePolar', value: { href: '/resources/polars/set', sailplanId: 'jib' } }
+          ])
+          assert.equal(app._savedOptions.at(-1).activeSailplan, 'jib')
+          assert.deepEqual(request('GET /activePolar').body,
+            { id: 'set', sailplanId: 'jib', exists: true, valid: true, errors: [] })
+          const active = app._propertyHistory.at(-1).value.activePolar()
+          const input = { tws: 4, twa: Math.PI / 3 }
+          if (typeof Polar.fromPolarSet === 'function') {
+            assert.equal(active.speedAt(input).value, 2.5)
+          } else {
+            assert.equal(active.speedAt(input).state.reason, 'unsupported_math')
+          }
+          const reset = request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } })
+          assert.deepEqual(reset.body, { id: 'set', sailplanId: null })
+          assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
+            { path: 'polars.activePolar', value: { href: '/resources/polars/set' } }
+          ])
+          assert.equal(app._savedOptions.at(-1).activeSailplan, '')
+          if (typeof Polar.fromPolarSet === 'function') {
+            assert.equal(active.speedAt(input).value, 2)
+          }
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('rejects unusable shared sailplan selections without changing the active pointer', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const provider = app._registeredProviders[0].methods
+          await provider.setResource('set', polarSet())
+          await provider.setResource('v1', {
+            kind: 'polarTable', schemaVersion: '1.0.0', name: 'V1',
+            units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+            symmetry: { portStarboardSymmetric: true },
+            axes: { tws: [5], twa: [0, Math.PI] },
+            values: { boatSpeedMatrix: [[1, 2]] }
+          })
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          const unknown = request('PUT /activePolar', { body: { id: 'set', sailplanId: 'unknown', acknowledgeV2: true } })
+          assert.equal(unknown.status, 400)
+          assert.match(unknown.body.error, /Active sailplan 'unknown' was not found in 'set'/)
+          const v1 = request('PUT /activePolar', { body: { id: 'v1', sailplanId: 'jib' } })
+          assert.equal(v1.status, 400)
+          assert.match(v1.body.error, /v1 document without sailplans/)
+          assert.equal(request('PUT /activePolar', { body: { id: null, sailplanId: 'jib' } }).status, 400)
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: '', acknowledgeV2: true } }).status, 400)
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: 7, acknowledgeV2: true } }).status, 400)
+          assert.deepEqual(request('GET /activePolar').body,
+            { id: null, sailplanId: null, exists: false, valid: false, errors: [] })
+          assert.deepEqual(app._savedOptions, [])
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('strictly invalidates a removed active sailplan and refuses to publish it on restart', async () => {
+        const app = createFakeApp(dataDir)
+        const pluginErrors = []
+        app.setPluginError = message => pluginErrors.push(message)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          await app._registeredProviders[0].methods.setResource('set', polarSet())
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: 'jib', acknowledgeV2: true } }).status, 200)
+          const active = app._propertyHistory.at(-1).value.activePolar()
+          // Replace the document with a valid v2 that no longer contains 'jib'.
+          const replaced = polarSet()
+          replaced.sailplans[0].id = 'genoa'
+          delete replaced.best.sailplanIdMatrix
+          delete replaced.best.derived.rows[0].beat.sailplanId
+          assert.equal(request('PUT /polars/:id', { params: { id: 'set' }, body: replaced }).status, 200)
+          const status = request('GET /activePolar').body
+          assert.equal(status.sailplanId, 'jib')
+          assert.equal(status.valid, false)
+          assert.match(status.errors.join('; '), /Active sailplan 'jib' was not found in 'set'/)
+          assert.equal(active.speedAt({ tws: 4, twa: 1 }).state.reason, 'sailplan_not_found')
+          // Restarting with the persisted broken selection reports an error, never publishes it.
+          plugin.stop()
+          plugin.start({ activePolar: 'set', activeSailplan: 'jib' })
+          assert.ok(pluginErrors.some(message => /Active sailplan 'jib' was not found in 'set'/.test(message)))
+          const pointerValues = app._messages.flatMap(message =>
+            (message.delta.updates[0].values || []).filter(value => value.path === 'polars.activePolar'))
+          assert.equal(pointerValues.at(-1).value, null)
         } finally {
           plugin.stop()
         }

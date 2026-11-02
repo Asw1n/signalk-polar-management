@@ -92,6 +92,53 @@ describe('live polar service', () => {
     assert.match(errors.at(-1), /Cannot prepare polar/)
   })
 
+  it('follows the shared active sailplan on every call and prepares each selection once', (t) => {
+    const document = polarSet()
+    document.sailplans[0].table.values.boatSpeedMatrix[0][0] = 2.5
+    store.save('set', document)
+    if (typeof Polar.fromPolarSet !== 'function') {
+      settings.activePolar = 'set'
+      settings.activeSailplan = 'jib'
+      service.notify({ type: 'selection' })
+      assert.equal(service.api.activePolar().speedAt({ tws: 4, twa: 1 }).state.reason, 'unsupported_math')
+      return
+    }
+    const prepare = t.mock.method(Polar, 'fromPolarSet')
+    const active = service.api.activePolar()
+    const input = { tws: 4, twa: Math.PI / 3 }
+    settings.activePolar = 'set'
+    service.notify({ type: 'selection' })
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.9) < 1e-12)
+    settings.activeSailplan = 'jib'
+    service.notify({ type: 'selection' })
+    assert.ok(Math.abs(active.speedAt(input).value - 2.5 * 0.9) < 1e-12)
+    assert.equal(prepare.mock.calls.at(-1).arguments[1], 'jib')
+    settings.activeSailplan = ''
+    service.notify({ type: 'selection' })
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.9) < 1e-12)
+    const count = prepare.mock.callCount()
+    settings.activeSailplan = 'jib'
+    service.notify({ type: 'selection' })
+    assert.ok(Math.abs(active.speedAt(input).value - 2.5 * 0.9) < 1e-12)
+    assert.equal(prepare.mock.callCount(), count)
+    assert.deepEqual(errors, [])
+  })
+
+  it('supports fixed-sailplan handles and reports unknown sailplans explicitly', () => {
+    const document = polarSet()
+    document.sailplans[0].table.values.boatSpeedMatrix[0][0] = 2.5
+    store.save('set', document)
+    assert.throws(() => service.api.polar('set', { sailplanId: '' }), TypeError)
+    assert.throws(() => service.api.polar('set', { sailplanId: 7 }), TypeError)
+    const missing = service.api.polar('set', { sailplanId: 'nope' })
+    assert.equal(missing.speedAt({ tws: 4, twa: 1 }).state.reason, 'sailplan_not_found')
+    assert.match(errors.at(-1), /Unknown sailplan: nope/)
+    if (typeof Polar.fromPolarSet === 'function') {
+      const jib = service.api.polar('set', { sailplanId: 'jib', performanceFactor: 0.8 })
+      assert.ok(Math.abs(jib.speedAt({ tws: 4, twa: Math.PI / 3 }).value - 2.5 * 0.8) < 1e-12)
+    }
+  })
+
   it('prepares only the active table at startup even with 200 stored polars', (t) => {
     service.stop()
     for (let i = 0; i < 198; i++) store.save(`unused-${i}`, table())

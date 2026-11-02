@@ -13,9 +13,16 @@ The service contract has `apiVersion: 1`.
 - `service.polar(id, { performanceFactor: 0.85 })` uses that explicit factor instead.
   It replaces, rather than multiplies, the shared factor. The factor must be a
   finite non-negative number; unlike the shared setting, it may exceed 1.
-- Canonical v1 documents keep their table behavior. V2 documents select `best`
-  using `Polar.fromPolarSet`; existing handles do not select a sailplan. Local
-  display/export table choices never change a handle or the shared active pointer.
+- `service.polar(id, { sailplanId: 'headsail' })` creates a handle fixed to that
+  v2 document-local sailplan; omit `sailplanId` for best. It must be a nonempty
+  string. An unknown or v1-incompatible sailplan yields `sailplan_not_found`
+  results, never a fallback to best.
+- Canonical v1 documents keep their table behavior. V2 documents select the
+  table with `Polar.fromPolarSet`. Active handles follow the **shared active
+  sailplan** on every calculation call: it defaults to best, is set together
+  with the active polar, and resets to best whenever the active polar changes.
+  Local display/export table choices never change a handle or the shared
+  active pointer.
   Complete root context, including wave correction, is passed to math, not
   flattened into a synthetic v1 table.
 - Table edits are reflected on the next calculation call, including calls on
@@ -27,8 +34,9 @@ The service contract has `apiVersion: 1`.
 - There are **no snapshots**. A long calculation can observe configuration
   changes between calls. Freezing a routing scenario is outside this API.
 
-Prepared `polar-math` tables are private and shared between handles. Only the
-active table is prepared at startup. Other tables are prepared when first
+Prepared `polar-math` tables are private and shared between handles, prepared
+per document **and selected sailplan**. Only the active selection is prepared at
+startup. Other tables are prepared when first
 requested through `polar(id)`, or when selected as active. Importing or editing
 an unused table does not prepare it. Successful managed mutations refresh only
 previously requested tables, including IDs that were missing or deleted.
@@ -54,7 +62,7 @@ The service has this shape:
   apiVersion: 1,
   available: true, // provider running, not a guarantee of an active selection
   activePolar(),
-  polar(id, { performanceFactor = 1 } = {})
+  polar(id, { performanceFactor = 1, sailplanId } = {})
 }
 ```
 
@@ -136,7 +144,7 @@ Provider-level unavailability returns:
 ```
 
 Reasons are `no_active_polar`, `polar_not_found`, `invalid_polar`,
-`unsupported_math` and
+`sailplan_not_found`, `unsupported_math` and
 `provider_stopped`. An invalid/unreadable table is reported through the plugin's
 error status when preparation fails, and does not fall back to an old table.
 Other result states, including `invalid_input` and `no_data`, come from
@@ -161,7 +169,7 @@ relevant change and receive a frozen `{ type, ids }` event:
 
 | Type | Meaning |
 | --- | --- |
-| `selection` | Active selection was published or cleared |
+| `selection` | Active selection (polar or shared sailplan) was published or cleared |
 | `performanceFactor` | Shared factor was published |
 | `saved` | Table created or replaced, including resource writes and imports |
 | `modified` | Metadata changed, possibly including its ID |

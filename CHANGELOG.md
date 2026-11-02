@@ -7,13 +7,14 @@
 - Canonical v2 validation, non-destructive storage/import/metadata editing and complete-document JSON export, alongside unchanged v1 resources and legacy importer output defaults.
 - Automatically detected ORC speed-guide HTML import to v2, using embedded high-precision numeric data when present and visible-table fallback otherwise. Preserves independent best/sailplan targets, heel/reef/flat and minimal sail descriptions; exact source 0.01-knot placeholders become unavailable, not real targets.
 - Local best/sailplan table display and curve selection, plus explicitly acknowledged selected-table exports (Expedition, Jieter or lossy canonical v1 projection). Incompatible missing speeds are rejected rather than filled.
-- Explicit v2 active-document acknowledgment to protect consumer rollout; the active-pointer shape is unchanged and no shared sailplan selection is introduced.
+- Explicit v2 active-document acknowledgment to protect consumer rollout.
+- Shared sailplan selection for an active v2 polar: pick best (default) or a named sailplan together with the active polar. The choice is published with the active-polar pointer, persists across restarts, resets to best when the active polar changes, and is followed automatically by live calculation handles. A sailplan that disappears from the document makes the selection explicitly invalid; it never silently falls back to best.
 
 ### Changed
 - Prepare calculation data only for the active polar and specifically requested polars, avoiding startup work and memory use for unused stored tables.
 - Use published `polar-format` 2 for both document versions. No automatic migration or package version change.
 - V2 curves use the agreed `Polar.fromPolarSet` API when available. Published `polar-math` 1.1.1 remains pinned by the existing dependency range and cannot render v2: return an explicit 503 until a compatible release is selected. Integration verification uses an isolated immutable unreleased math commit, not a local link or production dependency.
-- Preserve the newly merged in-process live-handle API: v2 handles prepare best without changing local table selection or pointer semantics; unsupported math returns an explicit `unsupported_math` result and plugin error.
+- Preserve the newly merged in-process live-handle API: active v2 handles follow the shared sailplan selection (best by default) on every call, and specific handles can fix a sailplan; local table display never changes handles. Unsupported math returns an explicit `unsupported_math` result and plugin error.
 
 ## 1.4.0 - 2026-10-29
 

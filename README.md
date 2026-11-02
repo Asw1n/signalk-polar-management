@@ -39,17 +39,25 @@ Integration can be verified separately against immutable unreleased
 dependency or a local link. Selecting a future math release is a remaining
 deployment prerequisite, not part of this no-release change.
 
-The active pointer remains `{ "href": "/resources/polars/<id>" }` at
-`vessels.self.polars.activePolar`: it selects the **complete document**, never a
-local display/export sailplan. No shared active-sailplan path is introduced.
-Before activating a v2 resource, every performance/navigation consumer must
-support v2. The UI requires confirmation; the activation API requires
-`{ "id": "...", "acknowledgeV2": true }`. This acknowledgment is not automatic
-consumer capability detection. Existing v1 activation and persisted active
-selection behavior are unchanged. The performance plugin is not modified here.
-Existing in-process handles always prepare a v2 document's **best** table;
-they never inherit the UI's local sailplan selection. Their lifecycle, factors,
-caching and change-notification contract are unchanged.
+The active pointer at `vessels.self.polars.activePolar` selects the **complete
+document** and, for v2, the **shared active sailplan**:
+`{ "href": "/resources/polars/<id>" }` with an additional `"sailplanId"` field
+only when a sailplan other than best is selected. Set it with
+`PUT /activePolar` `{ "id": "...", "sailplanId": "...", "acknowledgeV2": true }`;
+omit `sailplanId` for best. Changing the active polar resets the shared sailplan
+to best. A `sailplanId` must name an existing document-local sailplan and is
+rejected for v1 documents; if the selected sailplan is later removed from the
+document, the selection becomes explicitly invalid — it never silently falls
+back to best. Before activating a v2 resource, every performance/navigation
+consumer must support v2. The UI requires confirmation; the activation API
+requires `acknowledgeV2: true`. This acknowledgment is not automatic consumer
+capability detection. Existing v1 activation and persisted active selection
+behavior are unchanged. The performance plugin is not modified here.
+Active in-process handles follow the shared sailplan selection on every
+calculation call; `polar(id, { sailplanId })` creates a fixed-sailplan handle.
+The UI's local display/export table choices remain independent of the shared
+selection. Handle lifecycle, factors, caching and change-notification
+contracts are unchanged.
 
 ## Import an ORC speed-guide HTML file
 
