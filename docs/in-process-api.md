@@ -13,6 +13,28 @@ The service contract has `apiVersion: 1`.
 - `service.polar(id, { performanceFactor: 0.85 })` uses that explicit factor instead.
   It replaces, rather than multiplies, the shared factor. The factor must be a
   finite non-negative number; unlike the shared setting, it may exceed 1.
+- `service.polar(id, { sailplanId: 'headsail' })` creates a handle fixed to that
+  v2 document-local sailplan; omit `sailplanId` for best. It must be a nonempty
+  string. An unknown or v1-incompatible sailplan yields `sailplan_not_found`
+  results, never a fallback to best.
+- The two handle types differ deliberately. **Active handles mirror every
+  shared setting per call** — active polar, active sailplan, performance factor
+  and the wave-correction toggle — and none of them can be overridden; changes
+  apply between calls. **Specific handles are completely independent of shared
+  settings**: their consumer chooses the document, sailplan and factor at
+  acquisition, and controls wave correction per call by supplying or omitting
+  `seaState`. The shared wave-correction toggle never affects them.
+- Canonical v1 documents keep their table behavior. V2 documents select the
+  table with `Polar.fromPolarSet`. Active handles follow the **shared active
+  sailplan** on every calculation call: it defaults to best, is set together
+  with the active polar, and resets to best whenever the active polar changes.
+  Active handles also honor the **shared wave-correction toggle** (default on):
+  when off, supplied `seaState` is dropped before reaching math, so a present
+  `waveCorrection` table is not applied. Specific handles never drop `seaState`.
+  Local display/export table choices never change a handle or the shared
+  active pointer.
+  Complete root context, including wave correction, is passed to math, not
+  flattened into a synthetic v1 table.
 - Table edits are reflected on the next calculation call, including calls on
   already-retained handles. A specific handle stays bound to its ID: it does not
   follow a rename. If the ID is recreated, the same handle uses the new table.
@@ -22,8 +44,9 @@ The service contract has `apiVersion: 1`.
 - There are **no snapshots**. A long calculation can observe configuration
   changes between calls. Freezing a routing scenario is outside this API.
 
-Prepared `polar-math` tables are private and shared between handles. Only the
-active table is prepared at startup. Other tables are prepared when first
+Prepared `polar-math` tables are private and shared between handles, prepared
+per document **and selected sailplan**. Only the active selection is prepared at
+startup. Other tables are prepared when first
 requested through `polar(id)`, or when selected as active. Importing or editing
 an unused table does not prepare it. Successful managed mutations refresh only
 previously requested tables, including IDs that were missing or deleted.
@@ -49,7 +72,7 @@ The service has this shape:
   apiVersion: 1,
   available: true, // provider running, not a guarantee of an active selection
   activePolar(),
-  polar(id, { performanceFactor = 1 } = {})
+  polar(id, { performanceFactor = 1, sailplanId } = {})
 }
 ```
 
@@ -116,6 +139,35 @@ method does not override it. Consumers must not apply the shared factor again.
 Calls are synchronous and perform no filesystem access, validation or preparation.
 Neither prepared instances nor internal table data are exposed.
 
+## Handle description
+
+Both handle types also expose `describe()`: a synchronous, filesystem-free
+descriptive snapshot of the handle's current selection, for display purposes
+such as a consumer webapp's overview. It resolves exactly like the calculation
+methods — active handles mirror the shared selection per call, specific handles
+stay fixed to their acquisition choices — and returns a frozen object:
+
+```js
+{
+  available: true,
+  id,                 // storage id of the selected document
+  sailplanId,         // document-local sailplan id, or null for best / v1
+  performanceFactor,  // the factor this handle applies in calculations
+  name, boatType, sailnumber, year, source, notes, // document metadata, null when absent
+  twsAxis             // the selected table's TWS axis, canonical m/s, frozen
+}
+```
+
+`twsAxis` describes the grid of the table the handle calculates from (best or
+the selected sailplan's table), so consumers can render per-TWS curves without
+reading the resource document. Matrix data is still not exposed. Descriptions
+are rebuilt with the prepared table, so edits are reflected on the next call.
+When the handle cannot calculate, `describe()` returns
+`{ available: false, reason }` with the same reasons as the calculation
+methods. Consumers that only display metadata should prefer `describe()` over
+resource lookups and the `polars.*` paths: it already reflects the shared
+selection and needs no href or document-structure parsing.
+
 Provider-level unavailability returns:
 
 ```js
@@ -130,12 +182,23 @@ Provider-level unavailability returns:
 }
 ```
 
-Reasons are `no_active_polar`, `polar_not_found`, `invalid_polar` and
+Reasons are `no_active_polar`, `polar_not_found`, `invalid_polar`,
+`sailplan_not_found`, `unsupported_math` and
 `provider_stopped`. An invalid/unreadable table is reported through the plugin's
 error status when preparation fails, and does not fall back to an old table.
 Other result states, including `invalid_input` and `no_data`, come from
 polar-math. Unavailable calculations do not throw. Invalid handle acquisition
 arguments and invalid subscription callbacks throw descriptive errors.
+
+Published `polar-math` 1.1.1 does not implement v2. A valid v2 resource therefore
+returns `unsupported_math` from these handles and reports a descriptive plugin
+error at preparation time, rather than claiming the resource is invalid or
+silently using v1 data. Storage, numeric table display and export are independent
+of math readiness. A compatible released math dependency is still required for
+production v2 calculations; unreleased integration verification does not enable
+them automatically. All resource/delta consumers must support v2 before a v2
+active document is acknowledged. The service remains `apiVersion: 1` with the
+same four calculation methods and unchanged result shapes.
 
 ## Change subscriptions
 
@@ -145,8 +208,9 @@ relevant change and receive a frozen `{ type, ids }` event:
 
 | Type | Meaning |
 | --- | --- |
-| `selection` | Active selection was published or cleared |
+| `selection` | Active selection (polar or shared sailplan) was published or cleared |
 | `performanceFactor` | Shared factor was published |
+| `waveCorrection` | Shared wave-correction toggle was published |
 | `saved` | Table created or replaced, including resource writes and imports |
 | `modified` | Metadata changed, possibly including its ID |
 | `renamed` | Storage ID changed through the rename API |
@@ -154,10 +218,11 @@ relevant change and receive a frozen `{ type, ids }` event:
 | `deleted` | Table deleted |
 | `stopped` | Provider stopped; handles are already unavailable |
 
-`ids` contains affected storage IDs, or is empty for selection, shared factor
-and stop events. Specific handles receive only events affecting their ID, plus
+`ids` contains affected storage IDs, or is empty for selection, shared factor,
+wave-correction toggle and stop events. Specific handles receive only events
+affecting their ID, plus
 stop. Active handles receive changes affecting the current active ID, selection,
-shared factor and stop events.
+shared factor, wave-correction toggle and stop events.
 
 A compound operation, such as renaming the active polar and saving its new
 selection, can generate multiple events. Notifications describe completed

@@ -1,0 +1,3 @@
+# TimeZero sample files are verbatim exports (CRLF, ISO-8859-1); keep them byte-exact
+test/fixtures/timezero/** -text
+*.xlsm binary
