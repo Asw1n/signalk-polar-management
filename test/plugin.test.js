@@ -499,15 +499,24 @@ describe('plugin lifecycle', () => {
         }
       })
 
-      it('publishes, persists, applies and clears the shared wave-correction toggle', async () => {
+      it('publishes the wave toggle as null whenever the active polar cannot use it', async () => {
         const app = createFakeApp(dataDir)
         const plugin = createTestPlugin(app)
         plugin.start({})
         try {
           const waveValues = () => app._messages.flatMap(message =>
             (message.delta.updates[0].values || []).filter(value => value.path === 'polars.applyWaveCorrection'))
-          assert.equal(waveValues().at(-1).value, true)
-          await app._registeredProviders[0].methods.setResource('set', polarSet())
+          // No active polar: the path explicitly carries null while the stored setting stays on.
+          assert.equal(waveValues().at(-1).value, null)
+          const provider = app._registeredProviders[0].methods
+          await provider.setResource('set', polarSet())
+          await provider.setResource('plain', {
+            kind: 'polarTable', schemaVersion: '1.0.0', name: 'V1',
+            units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+            symmetry: { portStarboardSymmetric: true },
+            axes: { tws: [5], twa: [0, Math.PI] },
+            values: { boatSpeedMatrix: [[1, 2]] }
+          })
           const routes = {}
           plugin.registerWithRouter({
             get: (route, handler) => { routes[`GET ${route}`] = handler },
@@ -523,6 +532,7 @@ describe('plugin lifecycle', () => {
           }
           assert.deepEqual(request('GET /waveCorrection').body, { apply: true })
           assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+          assert.equal(waveValues().at(-1).value, true)
           const active = app._propertyHistory.at(-1).value.activePolar()
           const input = { tws: 4, twa: Math.PI / 3, seaState: { significantWaveHeight: 1, wavePeriod: 5, waveAngle: 0 } }
           if (typeof Polar.fromPolarSet === 'function') {
@@ -536,14 +546,23 @@ describe('plugin lifecycle', () => {
           if (typeof Polar.fromPolarSet === 'function') {
             assert.equal(active.speedAt(input).value, 2)
           }
+          // A v1 active polar nulls the path; the stored setting is kept.
+          assert.equal(request('PUT /activePolar', { body: { id: 'plain' } }).status, 200)
+          assert.equal(waveValues().at(-1).value, null)
+          assert.equal(request('PUT /waveCorrection', { body: { apply: true } }).status, 200)
+          assert.deepEqual(request('GET /waveCorrection').body, { apply: true })
+          assert.equal(waveValues().at(-1).value, null)
           assert.equal(request('PUT /waveCorrection', { body: { apply: 'yes' } }).status, 400)
-          assert.equal(request('PUT /waveCorrection', { body: {} }).status, 400)
-          assert.deepEqual(request('GET /waveCorrection').body, { apply: false })
+          // Reactivating a wave-capable polar republishes the stored setting.
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+          assert.equal(waveValues().at(-1).value, true)
+          // Replacing the active document without a wave table nulls the path again.
+          const replaced = polarSet()
+          delete replaced.waveCorrection
+          assert.equal(request('PUT /polars/:id', { params: { id: 'set' }, body: replaced }).status, 200)
+          assert.equal(waveValues().at(-1).value, null)
           plugin.stop()
           assert.equal(waveValues().at(-1).value, null)
-          // The persisted toggle is restored and republished on restart.
-          plugin.start({ applyWaveCorrection: false })
-          assert.equal(waveValues().at(-1).value, false)
         } finally {
           plugin.stop()
         }

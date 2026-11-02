@@ -23,7 +23,7 @@ module.exports = (app) => {
   let polarService = null
   let activePolarPublished = false
   let performanceFactorPublished = false
-  let applyWaveCorrectionPublished = false
+  let publishedWaveValue // undefined until first wave-correction publication
 
   const plugin = {
     id: 'signalk-polar-management',
@@ -100,7 +100,7 @@ module.exports = (app) => {
             value: {
               type: 'boolean',
               displayName: 'Apply wave correction',
-              description: 'Whether polar consumers should apply the active document\'s wave correction; no effect when the document has none.',
+              description: 'Whether polar consumers should apply the active document\'s wave correction; null when the active polar cannot use wave correction.',
               // Only emitted on change, not periodically -> exempt from stale-data timeout.
               updateContract: 'event'
             }
@@ -111,6 +111,7 @@ module.exports = (app) => {
   }
 
   function publishActivePolar(id, sailplanId) {
+    refreshApplyWaveCorrection()
     const value = id
       ? { href: `/resources/${RESOURCE_TYPE}/${id}`, ...(sailplanId ? { sailplanId } : {}) }
       : null
@@ -122,6 +123,7 @@ module.exports = (app) => {
   }
 
   function clearActivePolar() {
+    refreshApplyWaveCorrection()
     if (!activePolarPublished) {
       polarService?.notify({ type: 'selection' })
       return
@@ -153,16 +155,37 @@ module.exports = (app) => {
     app.handleMessage(plugin.id, {
       updates: [{ values: [{ path: APPLY_WAVE_CORRECTION_PATH, value }] }]
     })
-    applyWaveCorrectionPublished = true
+    publishedWaveValue = value
     polarService?.notify({ type: 'waveCorrection' })
   }
 
+  // The published path reflects usability, not just the stored setting: null
+  // whenever the active polar is v1, has no wave correction table, or no
+  // usable polar is active. Only changes are emitted.
+  function waveCorrectionValue() {
+    if (!store || !settings.activePolar || !store.exists(settings.activePolar)) return null
+    let document
+    try {
+      document = store.get(settings.activePolar)
+    } catch (_) {
+      return null
+    }
+    if (document.kind !== 'polarSet' || !document.waveCorrection) return null
+    return settings.applyWaveCorrection
+  }
+
+  function refreshApplyWaveCorrection() {
+    const value = waveCorrectionValue()
+    if (value !== publishedWaveValue) publishApplyWaveCorrection(value)
+  }
+
   function clearApplyWaveCorrection() {
-    if (!applyWaveCorrectionPublished) return
-    app.handleMessage(plugin.id, {
-      updates: [{ values: [{ path: APPLY_WAVE_CORRECTION_PATH, value: null }] }]
-    })
-    applyWaveCorrectionPublished = false
+    if (publishedWaveValue !== undefined && publishedWaveValue !== null) {
+      app.handleMessage(plugin.id, {
+        updates: [{ values: [{ path: APPLY_WAVE_CORRECTION_PATH, value: null }] }]
+      })
+    }
+    publishedWaveValue = undefined
   }
 
   plugin.start = (options) => {
@@ -176,7 +199,7 @@ module.exports = (app) => {
     exportService = new ExportService()
 
     publishMetadata()
-    publishApplyWaveCorrection(settings.applyWaveCorrection)
+    refreshApplyWaveCorrection()
     publishPerformanceFactor(settings.performanceFactor)
 
     if (settings.activePolar && store.exists(settings.activePolar)) {
@@ -204,6 +227,7 @@ module.exports = (app) => {
         },
         setResource: async (id, value) => {
           store.save(id, value)
+          if (id === settings.activePolar) refreshApplyWaveCorrection()
         },
         deleteResource: async (id) => {
           if (settings.activePolar === id) {
@@ -294,6 +318,7 @@ module.exports = (app) => {
     router.put('/polars/:id', (req, res) => {
       try {
         store.save(req.params.id, req.body)
+        if (req.params.id === settings.activePolar) refreshApplyWaveCorrection()
         res.json({ id: req.params.id })
       } catch (e) {
         res.status(400).json({ error: e.message })
@@ -466,7 +491,7 @@ module.exports = (app) => {
       app.savePluginOptions(nextSettings, (err) => {
         if (err) return res.status(500).json({ error: err.message })
         settings.applyWaveCorrection = nextSettings.applyWaveCorrection
-        publishApplyWaveCorrection(settings.applyWaveCorrection)
+        refreshApplyWaveCorrection()
         res.json({ apply: settings.applyWaveCorrection })
       })
     })
