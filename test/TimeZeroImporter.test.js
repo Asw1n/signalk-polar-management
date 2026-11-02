@@ -69,6 +69,7 @@ describe('TimeZeroImporter', () => {
     const { resource } = new TimeZeroImporter().parse(WIND_POLAR)
 
     assert.equal(resource.kind, 'polarTable')
+    assert.equal(resource.schemaVersion, '1.0.0')
     assert.deepEqual(resource.axes.tws.map(tws => Math.round(SI.toKnots(tws) * 1000) / 1000), [3, 10])
     assert.deepEqual(resource.axes.twa.map(twa => Math.round(SI.toDegrees(twa))), [40, 90, 150])
     close(resource.values.boatSpeedMatrix[1][1], SI.fromKnots(7.4))

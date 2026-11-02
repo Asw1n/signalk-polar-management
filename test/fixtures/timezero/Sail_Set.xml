@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="yes"?>
+<SailSetPolar xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+		<WindSet>
+			<TWS value ="4"/>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="40"/>
+						<TWAMax value ="80"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="LightUpWind"/>
+				<ColorLeft value ="FFFF99"/>
+				<ColorRight value ="FFFF99"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="80"/>
+						<TWAMax value ="110"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="LightReaching"/>
+				<ColorLeft value ="66CCFF"/>
+				<ColorRight value ="66CCFF"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="110"/>
+						<TWAMax value ="180"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="LightDownWind"/>
+				<ColorLeft value ="99FF99"/>
+				<ColorRight value ="99FF99"/>
+				</SailSet>
+		</WindSet>
+		<WindSet>
+			<TWS value ="8"/>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="40"/>
+						<TWAMax value ="80"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="LightUpWind"/>
+				<ColorLeft value ="FFFF99"/>
+				<ColorRight value ="FFFF99"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="80"/>
+						<TWAMax value ="130"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="LightReaching"/>
+				<ColorLeft value ="66CCFF"/>
+				<ColorRight value ="66CCFF"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="130"/>
+						<TWAMax value ="180"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="LightDownWind"/>
+				<ColorLeft value ="99FF99"/>
+				<ColorRight value ="99FF99"/>
+				</SailSet>
+		</WindSet>
+		<WindSet>
+			<TWS value ="14"/>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="40"/>
+						<TWAMax value ="80"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="MediumUpWind"/>
+				<ColorLeft value ="FF9933"/>
+				<ColorRight value ="FF9933"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="80"/>
+						<TWAMax value ="110"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="MediumReaching"/>
+				<ColorLeft value ="0066FF"/>
+				<ColorRight value ="0066FF"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="110"/>
+						<TWAMax value ="130"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="LightReaching"/>
+				<ColorLeft value ="66CCFF"/>
+				<ColorRight value ="66CCFF"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="130"/>
+						<TWAMax value ="180"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="MediumDownWind"/>
+				<ColorLeft value ="00CC00"/>
+				<ColorRight value ="00CC00"/>
+				</SailSet>
+		</WindSet>
+		<WindSet>
+			<TWS value ="20"/>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="40"/>
+						<TWAMax value ="90"/>
+					</TWARange>
+						<MainSail value ="1Reef"/>
+						<FrontSail value ="MediumUpWind"/>
+				<ColorLeft value ="FF9933"/>
+				<ColorRight value ="FF9933"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="90"/>
+						<TWAMax value ="110"/>
+					</TWARange>
+						<MainSail value ="1Reef"/>
+						<FrontSail value ="MediumReaching"/>
+				<ColorLeft value ="0066FF"/>
+				<ColorRight value ="0066FF"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="110"/>
+						<TWAMax value ="130"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="MediumReaching"/>
+				<ColorLeft value ="0066FF"/>
+				<ColorRight value ="0066FF"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="130"/>
+						<TWAMax value ="180"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="MediumDownWind"/>
+				<ColorLeft value ="00CC00"/>
+				<ColorRight value ="00CC00"/>
+				</SailSet>
+		</WindSet>
+		<WindSet>
+			<TWS value ="25"/>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="40"/>
+						<TWAMax value ="60"/>
+					</TWARange>
+						<MainSail value ="2Reef"/>
+						<FrontSail value ="StrongUpWind"/>
+				<ColorLeft value ="FD5003"/>
+				<ColorRight value ="FD5003"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="60"/>
+						<TWAMax value ="90"/>
+					</TWARange>
+						<MainSail value ="2Reef"/>
+						<FrontSail value ="MediumUpWind"/>
+				<ColorLeft value ="FF9933"/>
+				<ColorRight value ="FF9933"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="90"/>
+						<TWAMax value ="110"/>
+					</TWARange>
+						<MainSail value ="2Reef"/>
+						<FrontSail value ="MediumReaching"/>
+				<ColorLeft value ="0066FF"/>
+				<ColorRight value ="0066FF"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="110"/>
+						<TWAMax value ="130"/>
+					</TWARange>
+						<MainSail value ="1Reef"/>
+						<FrontSail value ="StrongDownWind"/>
+				<ColorLeft value ="0000CC"/>
+				<ColorRight value ="0000CC"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="130"/>
+						<TWAMax value ="180"/>
+					</TWARange>
+						<MainSail value ="GV"/>
+						<FrontSail value ="MediumDownWind"/>
+				<ColorLeft value ="00CC00"/>
+				<ColorRight value ="00CC00"/>
+				</SailSet>
+		</WindSet>
+		<WindSet>
+			<TWS value ="30"/>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="40"/>
+						<TWAMax value ="110"/>
+					</TWARange>
+						<MainSail value ="3Reef"/>
+						<FrontSail value ="StrongUpWind"/>
+				<ColorLeft value ="FD5003"/>
+				<ColorRight value ="FD5003"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="110"/>
+						<TWAMax value ="180"/>
+					</TWARange>
+						<MainSail value ="2Reef"/>
+						<FrontSail value ="StrongDownWind"/>
+				<ColorLeft value ="0000CC"/>
+				<ColorRight value ="0000CC"/>
+				</SailSet>
+		</WindSet>
+		<WindSet>
+			<TWS value ="40"/>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="40"/>
+						<TWAMax value ="110"/>
+					</TWARange>
+						<MainSail value ="Off"/>
+						<FrontSail value ="GaleUpWind"/>
+				<ColorLeft value ="FF0000"/>
+				<ColorRight value ="FF0000"/>
+				</SailSet>
+				<SailSet>
+					<TWARange>
+						<TWAMin value ="110"/>
+						<TWAMax value ="180"/>
+					</TWARange>
+						<MainSail value ="Off"/>
+						<FrontSail value ="GaleDownWind"/>
+				<ColorLeft value ="000082"/>
+				<ColorRight value ="000082"/>
+				</SailSet>
+		</WindSet>
+</SailSetPolar>

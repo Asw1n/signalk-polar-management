@@ -7,6 +7,8 @@ const os = require('os')
 const path = require('path')
 const pluginFactory = require('../index')
 const PolarStore = require('../lib/PolarStore')
+const { Polar } = require('polar-math')
+const { polarSet } = require('./fixtures/polarSet')
 
 function withRoutePolicies(router) {
   if (router.routePolicies instanceof Map) return router
@@ -115,10 +117,19 @@ describe('plugin lifecycle', () => {
           'PUT /polars/:id/metadata': 'admin',
           'POST /polars/:id/rename': 'admin',
           'GET /internet': 'readonly',
+          'GET /polars/:id/waveCorrection': 'readonly',
+          'PUT /polars/:id/waveCorrection': 'admin',
+          'POST /polars/:id/waveCorrection/import': 'admin',
+          'DELETE /polars/:id/waveCorrection': 'admin',
+          'POST /polars/:id/sailplans': 'admin',
+          'DELETE /polars/:id/sailplans/:sailplanId': 'admin',
+          'PUT /polars/:id/sailplans/:sailplanId/metadata': 'admin',
           'GET /activePolar': 'readonly',
           'PUT /activePolar': 'admin',
           'GET /performanceFactor': 'readonly',
           'PUT /performanceFactor': 'admin',
+          'GET /waveCorrection': 'readonly',
+          'PUT /waveCorrection': 'admin',
           'GET /imports/formats': 'readonly',
           'POST /imports/text/:format': 'admin',
           'GET /imports/sources': 'readonly',
@@ -221,6 +232,9 @@ describe('plugin lifecycle', () => {
 
     assert.ok(meta.some(item => item.path === 'polars.activePolar'))
     assert.ok(meta.some(item => item.path === 'polars.performanceFactor'))
+    assert.ok(meta.some(item => item.path === 'polars.applyWaveCorrection'))
+    assert.ok(meta.some(item => item.path === 'polars.boatName'))
+    assert.ok(meta.some(item => item.path === 'polars.sailPlan'))
     plugin.stop()
   })
 
@@ -312,6 +326,356 @@ describe('plugin lifecycle', () => {
         delete: () => {}
       })
     })
+
+      it('preserves complete v2 resources through provider, routes, metadata and active-pointer lifecycle', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const provider = app._registeredProviders[0].methods
+          const original = polarSet()
+          await provider.setResource('set', original)
+          const routes = {}
+          const router = {}
+          for (const method of ['get', 'put', 'post', 'delete']) {
+            router[method] = (route, handler) => { routes[`${method.toUpperCase()} ${route}`] = handler }
+          }
+          plugin.registerWithRouter(router)
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const headers = {}
+            const res = {
+              status: code => { status = code; return res },
+              json: value => { body = value },
+              send: value => { body = value },
+              set: (key, value) => { headers[key] = value },
+              end: () => {}
+            }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body, headers }
+          }
+          assert.deepEqual(await provider.getResource('set'), original)
+          assert.deepEqual(request('GET /polars/:id', { params: { id: 'set' } }).body, original)
+          assert.equal(request('GET /polars/:id/validate', { params: { id: 'set' } }).body.valid, true)
+          assert.equal((await provider.listResources()).set.kind, 'polarSet')
+          const exported = request('GET /polars/:id/export/:format', { params: { id: 'set', format: 'json' } })
+          assert.deepEqual(JSON.parse(exported.body), original)
+          assert.equal(exported.headers['Content-Type'], 'application/json')
+          const incompatible = request('GET /polars/:id/export/:format', {
+            params: { id: 'set', format: 'expedition' }, query: { scope: 'table', acknowledgeLoss: 'true' }
+          })
+          assert.equal(incompatible.status, 400)
+          assert.match(incompatible.body.error, /missing speeds/)
+          assert.equal(request('PUT /activePolar', { body: { id: 'set' } }).status, 409)
+          assert.equal(request('GET /activePolar').body.id, null)
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+          assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
+            { path: 'polars.activePolar', value: { href: '/resources/polars/set' } }
+          ])
+          assert.equal(request('GET /activePolar').body.valid, true)
+          const count = app._messages.length
+          const curves = request('GET /polars/:id/curves', { params: { id: 'set' }, query: { sailplanId: 'jib' } })
+          assert.ok([200, 503].includes(curves.status))
+          assert.equal(request('GET /polars/:id/curves', { params: { id: 'set' }, query: { sailplanId: 'unknown' } }).status, 400)
+          assert.equal(app._messages.length, count)
+          request('PUT /polars/:id/metadata', { params: { id: 'set' }, body: { id: 'renamed', name: 'Edited' } })
+          assert.deepEqual(await provider.getResource('renamed'), { ...original, name: 'Edited' })
+          assert.equal(request('GET /activePolar').body.id, 'renamed')
+          await assert.rejects(provider.deleteResource('renamed'), /active polar/)
+          assert.equal(request('DELETE /polars/:id', { params: { id: 'renamed' } }).status, 409)
+          assert.equal(request('PUT /activePolar', { body: { id: null } }).status, 200)
+          await provider.deleteResource('renamed')
+          await assert.rejects(provider.getResource('renamed'), /not found/)
+          assert.ok(app._messages.every(message => (message.delta.updates[0].values || []).every(value =>
+            ['polars.activePolar', 'polars.performanceFactor', 'polars.applyWaveCorrection', 'polars.boatName', 'polars.sailPlan'].includes(value.path))))
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('activates, publishes, persists and resets a shared v2 sailplan selection', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const document = polarSet()
+          document.sailplans[0].table.values.boatSpeedMatrix[0][0] = 2.5
+          await app._registeredProviders[0].methods.setResource('set', document)
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          const activated = request('PUT /activePolar', { body: { id: 'set', sailplanId: 'jib', acknowledgeV2: true } })
+          assert.equal(activated.status, 200)
+          assert.deepEqual(activated.body, { id: 'set', sailplanId: 'jib' })
+          assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
+            { path: 'polars.activePolar', value: { href: '/resources/polars/set', sailplanId: 'jib' } }
+          ])
+          assert.equal(app._savedOptions.at(-1).activeSailplan, 'jib')
+          assert.deepEqual(request('GET /activePolar').body,
+            { id: 'set', sailplanId: 'jib', exists: true, valid: true, errors: [] })
+          const active = app._propertyHistory.at(-1).value.activePolar()
+          const input = { tws: 4, twa: Math.PI / 3 }
+          if (typeof Polar.fromPolarSet === 'function') {
+            assert.equal(active.speedAt(input).value, 2.5)
+          } else {
+            assert.equal(active.speedAt(input).state.reason, 'unsupported_math')
+          }
+          const reset = request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } })
+          assert.deepEqual(reset.body, { id: 'set', sailplanId: null })
+          assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
+            { path: 'polars.activePolar', value: { href: '/resources/polars/set' } }
+          ])
+          assert.equal(app._savedOptions.at(-1).activeSailplan, '')
+          if (typeof Polar.fromPolarSet === 'function') {
+            assert.equal(active.speedAt(input).value, 2)
+          }
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('publishes the active boat name and sailplan name', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const identity = () => {
+            const latest = {}
+            for (const message of app._messages) {
+              for (const value of message.delta.updates[0].values || []) {
+                if (['polars.boatName', 'polars.sailPlan'].includes(value.path)) latest[value.path] = value.value
+              }
+            }
+            return [latest['polars.boatName'], latest['polars.sailPlan']]
+          }
+          assert.deepEqual(identity(), [null, null])
+          await app._registeredProviders[0].methods.setResource('set', polarSet())
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+          assert.deepEqual(identity(), ['Root boat', 'best'])
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: 'jib', acknowledgeV2: true } }).status, 200)
+          assert.deepEqual(identity(), ['Root boat', 'Headsail'])
+          assert.equal(request('PUT /polars/:id/sailplans/:sailplanId/metadata',
+            { params: { id: 'set', sailplanId: 'jib' }, body: { name: 'Genoa' } }).status, 200)
+          assert.deepEqual(identity(), ['Root boat', 'Genoa'])
+          assert.equal(request('PUT /polars/:id/metadata',
+            { params: { id: 'set' }, body: { id: 'set', name: 'Edited boat' } }).status, 200)
+          assert.deepEqual(identity(), ['Edited boat', 'Genoa'])
+          assert.equal(request('PUT /activePolar', { body: { id: null } }).status, 200)
+          assert.deepEqual(identity(), [null, null])
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('rejects unusable shared sailplan selections without changing the active pointer', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const provider = app._registeredProviders[0].methods
+          await provider.setResource('set', polarSet())
+          await provider.setResource('v1', {
+            kind: 'polarTable', schemaVersion: '1.0.0', name: 'V1',
+            units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+            symmetry: { portStarboardSymmetric: true },
+            axes: { tws: [5], twa: [0, Math.PI] },
+            values: { boatSpeedMatrix: [[1, 2]] }
+          })
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          const unknown = request('PUT /activePolar', { body: { id: 'set', sailplanId: 'unknown', acknowledgeV2: true } })
+          assert.equal(unknown.status, 400)
+          assert.match(unknown.body.error, /Active sailplan 'unknown' was not found in 'set'/)
+          const v1 = request('PUT /activePolar', { body: { id: 'v1', sailplanId: 'jib' } })
+          assert.equal(v1.status, 400)
+          assert.match(v1.body.error, /v1 document without sailplans/)
+          assert.equal(request('PUT /activePolar', { body: { id: null, sailplanId: 'jib' } }).status, 400)
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: '', acknowledgeV2: true } }).status, 400)
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: 7, acknowledgeV2: true } }).status, 400)
+          assert.deepEqual(request('GET /activePolar').body,
+            { id: null, sailplanId: null, exists: false, valid: false, errors: [] })
+          assert.deepEqual(app._savedOptions, [])
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('strictly invalidates a removed active sailplan and refuses to publish it on restart', async () => {
+        const app = createFakeApp(dataDir)
+        const pluginErrors = []
+        app.setPluginError = message => pluginErrors.push(message)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          await app._registeredProviders[0].methods.setResource('set', polarSet())
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: 'jib', acknowledgeV2: true } }).status, 200)
+          const active = app._propertyHistory.at(-1).value.activePolar()
+          // Replace the document with a valid v2 that no longer contains 'jib'.
+          const replaced = polarSet()
+          replaced.sailplans[0].id = 'genoa'
+          delete replaced.best.sailplanIdMatrix
+          delete replaced.best.derived.rows[0].beat.sailplanId
+          assert.equal(request('PUT /polars/:id', { params: { id: 'set' }, body: replaced }).status, 200)
+          const status = request('GET /activePolar').body
+          assert.equal(status.sailplanId, 'jib')
+          assert.equal(status.valid, false)
+          assert.match(status.errors.join('; '), /Active sailplan 'jib' was not found in 'set'/)
+          assert.equal(active.speedAt({ tws: 4, twa: 1 }).state.reason, 'sailplan_not_found')
+          // Restarting with the persisted broken selection reports an error, never publishes it.
+          plugin.stop()
+          plugin.start({ activePolar: 'set', activeSailplan: 'jib' })
+          assert.ok(pluginErrors.some(message => /Active sailplan 'jib' was not found in 'set'/.test(message)))
+          const pointerValues = app._messages.flatMap(message =>
+            (message.delta.updates[0].values || []).filter(value => value.path === 'polars.activePolar'))
+          assert.equal(pointerValues.at(-1).value, null)
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('publishes the wave toggle as null whenever the active polar cannot use it', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          const waveValues = () => app._messages.flatMap(message =>
+            (message.delta.updates[0].values || []).filter(value => value.path === 'polars.applyWaveCorrection'))
+          // No active polar: the path explicitly carries null while the stored setting stays on.
+          assert.equal(waveValues().at(-1).value, null)
+          const provider = app._registeredProviders[0].methods
+          await provider.setResource('set', polarSet())
+          await provider.setResource('plain', {
+            kind: 'polarTable', schemaVersion: '1.0.0', name: 'V1',
+            units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+            symmetry: { portStarboardSymmetric: true },
+            axes: { tws: [5], twa: [0, Math.PI] },
+            values: { boatSpeedMatrix: [[1, 2]] }
+          })
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          const request = (route, req = {}) => {
+            let status = 200
+            let body
+            const res = { status: code => { status = code; return res }, json: value => { body = value } }
+            routes[route]({ query: {}, ...req }, res)
+            return { status, body }
+          }
+          assert.deepEqual(request('GET /waveCorrection').body, { apply: true })
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+          assert.equal(waveValues().at(-1).value, true)
+          const active = app._propertyHistory.at(-1).value.activePolar()
+          const input = { tws: 4, twa: Math.PI / 3, seaState: { significantWaveHeight: 1, wavePeriod: 5, waveAngle: 0 } }
+          if (typeof Polar.fromPolarSet === 'function') {
+            assert.ok(Math.abs(active.speedAt(input).value - 1.6) < 1e-12)
+          }
+          const off = request('PUT /waveCorrection', { body: { apply: false } })
+          assert.equal(off.status, 200)
+          assert.deepEqual(off.body, { apply: false })
+          assert.equal(app._savedOptions.at(-1).applyWaveCorrection, false)
+          assert.equal(waveValues().at(-1).value, false)
+          if (typeof Polar.fromPolarSet === 'function') {
+            assert.equal(active.speedAt(input).value, 2)
+          }
+          // A v1 active polar nulls the path; the stored setting is kept.
+          assert.equal(request('PUT /activePolar', { body: { id: 'plain' } }).status, 200)
+          assert.equal(waveValues().at(-1).value, null)
+          assert.equal(request('PUT /waveCorrection', { body: { apply: true } }).status, 200)
+          assert.deepEqual(request('GET /waveCorrection').body, { apply: true })
+          assert.equal(waveValues().at(-1).value, null)
+          assert.equal(request('PUT /waveCorrection', { body: { apply: 'yes' } }).status, 400)
+          // Reactivating a wave-capable polar republishes the stored setting.
+          assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+          assert.equal(waveValues().at(-1).value, true)
+          // Replacing the active document without a wave table nulls the path again.
+          const replaced = polarSet()
+          delete replaced.waveCorrection
+          assert.equal(request('PUT /polars/:id', { params: { id: 'set' }, body: replaced }).status, 200)
+          assert.equal(waveValues().at(-1).value, null)
+          plugin.stop()
+          assert.equal(waveValues().at(-1).value, null)
+        } finally {
+          plugin.stop()
+        }
+      })
+
+      it('does not change the active document when persisting a v2 activation fails', async () => {
+        const app = createFakeApp(dataDir)
+        const plugin = createTestPlugin(app)
+        plugin.start({})
+        try {
+          await app._registeredProviders[0].methods.setResource('set', polarSet())
+          const routes = {}
+          plugin.registerWithRouter({
+            get: (route, handler) => { routes[`GET ${route}`] = handler },
+            put: (route, handler) => { routes[`PUT ${route}`] = handler },
+            post: () => {}, delete: () => {}
+          })
+          app.savePluginOptions = (_, callback) => callback(new Error('Disk full'))
+          const count = app._messages.length
+          let status
+          const res = { status: code => { status = code; return res }, json: () => {} }
+          routes['PUT /activePolar']({ body: { id: 'set', acknowledgeV2: true } }, res)
+          assert.equal(status, 500)
+          assert.equal(app._messages.length, count)
+          let body
+          routes['GET /activePolar']({}, { json: value => { body = value } })
+          assert.equal(body.id, null)
+        } finally {
+          plugin.stop()
+        }
+      })
 
     afterEach(() => plugin.stop())
 
@@ -453,6 +817,178 @@ describe('plugin lifecycle', () => {
       await assert.rejects(provider.getResource('new-id'), /not found/)
       assert.equal(request('GET /activePolar', {}).body.id, 'original')
       assert.equal(app._messages.length, count)
+    })
+  })
+
+  describe('document editing endpoints', () => {
+    let app
+    let plugin
+    let provider
+    let routes
+
+    const v1Table = () => ({
+      kind: 'polarTable', schemaVersion: '1.0.0', name: 'Storm table',
+      units: { tws: 'm/s', twa: 'rad', boatSpeed: 'm/s' },
+      symmetry: { portStarboardSymmetric: true },
+      axes: { tws: [5], twa: [0, Math.PI] },
+      values: { boatSpeedMatrix: [[1, 2]] }
+    })
+
+    beforeEach(() => {
+      app = createFakeApp(dataDir)
+      plugin = createTestPlugin(app)
+      plugin.start({})
+      provider = app._registeredProviders[0].methods
+      routes = {}
+      plugin.registerWithRouter({
+        get: (route, handler) => { routes[`GET ${route}`] = handler },
+        put: (route, handler) => { routes[`PUT ${route}`] = handler },
+        post: (route, handler) => { routes[`POST ${route}`] = handler },
+        delete: (route, handler) => { routes[`DELETE ${route}`] = handler }
+      })
+    })
+
+    afterEach(() => plugin.stop())
+
+    function request(route, req = {}) {
+      let status = 200
+      let body
+      const res = {
+        status: code => { status = code; return res },
+        json: value => { body = value },
+        end: () => {}
+      }
+      routes[route]({ query: {}, ...req }, res)
+      return { status, body }
+    }
+
+    const waveValues = () => app._messages.flatMap(message =>
+      (message.delta.updates[0].values || []).filter(value => value.path === 'polars.applyWaveCorrection'))
+
+    it('imports, exports and deletes a wave correction with explicit null publication', async () => {
+      const bare = polarSet()
+      delete bare.waveCorrection
+      await provider.setResource('set', bare)
+      await provider.setResource('plain', v1Table())
+      assert.equal(request('GET /polars/:id/waveCorrection', { params: { id: 'set' } }).status, 404)
+      assert.equal(request('PUT /activePolar', { body: { id: 'set', acknowledgeV2: true } }).status, 200)
+      assert.equal(waveValues().at(-1).value, null)
+
+      const xml = fs.readFileSync(path.join(__dirname, 'fixtures', 'timezero', 'Wave_Polar.xml'), 'utf8')
+      const imported = request('POST /polars/:id/waveCorrection/import', { params: { id: 'set' }, body: { content: xml } })
+      assert.equal(imported.status, 200)
+      assert.deepEqual(imported.body, { heights: 6 })
+      assert.equal(waveValues().at(-1).value, true)
+
+      // UTF-16 content decoded as UTF-8 (NUL-padded) still imports.
+      const nulPadded = [...xml].map(character => character + '\u0000').join('')
+      assert.equal(request('POST /polars/:id/waveCorrection/import', {
+        params: { id: 'set' }, body: { content: nulPadded }
+      }).status, 200)
+
+      const exported = request('GET /polars/:id/waveCorrection', { params: { id: 'set' } })
+      assert.equal(exported.status, 200)
+      const { waveCorrection } = exported.body
+      assert.deepEqual(waveCorrection.heights.map(layer => layer.significantWaveHeight), [0, 0.5, 2, 5, 10, 15])
+      assert.ok(Math.abs(waveCorrection.heights[0].axes.waveAngle.at(-1) - Math.PI) < 1e-12)
+      assert.ok(waveCorrection.heights[0].values.speedFactorMatrix.every(row => row.every(factor => factor === 1)))
+
+      // Canonical JSON fragments round-trip through PUT and import.
+      assert.equal(request('PUT /polars/:id/waveCorrection', {
+        params: { id: 'set' }, body: { waveCorrection }
+      }).status, 200)
+      assert.equal(request('POST /polars/:id/waveCorrection/import', {
+        params: { id: 'set' }, body: { content: JSON.stringify({ waveCorrection }) }
+      }).status, 200)
+
+      // Invalid fragments are rejected and leave the document unchanged.
+      const broken = structuredClone(waveCorrection)
+      broken.heights[0].values.speedFactorMatrix[0][0] = 0.5
+      const rejected = request('PUT /polars/:id/waveCorrection', { params: { id: 'set' }, body: { waveCorrection: broken } })
+      assert.equal(rejected.status, 400)
+      assert.deepEqual((await provider.getResource('set')).waveCorrection, waveCorrection)
+
+      assert.equal(request('DELETE /polars/:id/waveCorrection', { params: { id: 'set' } }).status, 204)
+      assert.equal(request('GET /polars/:id/waveCorrection', { params: { id: 'set' } }).status, 404)
+      assert.equal(waveValues().at(-1).value, null)
+      assert.equal(request('DELETE /polars/:id/waveCorrection', { params: { id: 'set' } }).status, 404)
+
+      // v1 documents can never carry a wave correction.
+      assert.equal(request('PUT /polars/:id/waveCorrection', { params: { id: 'plain' }, body: { waveCorrection } }).status, 400)
+      assert.equal(request('POST /polars/:id/waveCorrection/import', { params: { id: 'plain' }, body: { content: xml } }).status, 400)
+      assert.equal(request('GET /polars/:id/waveCorrection', { params: { id: 'plain' } }).status, 404)
+    })
+
+    it('edits polar notes through the metadata endpoint', async () => {
+      await provider.setResource('plain', v1Table())
+      assert.equal(request('PUT /polars/:id/metadata', {
+        params: { id: 'plain' }, body: { id: 'plain', notes: 'Fresh notes' }
+      }).status, 200)
+      assert.equal((await provider.getResource('plain')).notes, 'Fresh notes')
+      assert.equal(request('PUT /polars/:id/metadata', {
+        params: { id: 'plain' }, body: { id: 'plain', notes: '' }
+      }).status, 200)
+      assert.equal(Object.hasOwn(await provider.getResource('plain'), 'notes'), false)
+    })
+
+    it('imports, edits and deletes sailplans with strict reference handling', async () => {
+      await provider.setResource('set', polarSet())
+      await provider.setResource('plain', v1Table())
+
+      // 'jib' is referenced by best's winning-sailplan data: deletion is rejected.
+      const referenced = request('DELETE /polars/:id/sailplans/:sailplanId', { params: { id: 'set', sailplanId: 'jib' } })
+      assert.equal(referenced.status, 409)
+      assert.match(referenced.body.error, /references it/)
+
+      // Import a new sailplan from canonical v1 single-table content.
+      const added = request('POST /polars/:id/sailplans', {
+        params: { id: 'set' }, body: { content: JSON.stringify(v1Table()), name: 'Storm set' }
+      })
+      assert.equal(added.status, 200)
+      assert.deepEqual(added.body, { id: 'storm-set' })
+      const stored = await provider.getResource('set')
+      const storm = stored.sailplans.find(plan => plan.id === 'storm-set')
+      assert.equal(storm.name, 'Storm set')
+      assert.deepEqual(storm.table, { axes: v1Table().axes, values: v1Table().values })
+      assert.equal(request('POST /polars/:id/sailplans', {
+        params: { id: 'set' }, body: { content: JSON.stringify(v1Table()), name: 'Storm set' }
+      }).status, 400)
+
+      // Sailplan metadata edits, including an id rename that updates best's
+      // winning references and follows the shared active selection.
+      assert.equal(request('PUT /activePolar', { body: { id: 'set', sailplanId: 'jib', acknowledgeV2: true } }).status, 200)
+      const renamed = request('PUT /polars/:id/sailplans/:sailplanId/metadata', {
+        params: { id: 'set', sailplanId: 'jib' }, body: { id: 'headsail', name: 'Headsail', notes: 'Renamed' }
+      })
+      assert.equal(renamed.status, 200)
+      assert.deepEqual(renamed.body, { id: 'headsail' })
+      const updated = await provider.getResource('set')
+      assert.equal(updated.sailplans.find(plan => plan.id === 'headsail').notes, 'Renamed')
+      assert.equal(updated.best.sailplanIdMatrix[0][0], 'headsail')
+      assert.equal(updated.best.derived.rows[0].beat.sailplanId, 'headsail')
+      assert.equal(request('GET /activePolar', {}).body.sailplanId, 'headsail')
+      assert.deepEqual(app._messages.at(-1).delta.updates[0].values, [
+        { path: 'polars.activePolar', value: { href: '/resources/polars/set', sailplanId: 'headsail' } }
+      ])
+
+      // The active sailplan cannot be deleted; unreferenced inactive ones can.
+      const active = request('DELETE /polars/:id/sailplans/:sailplanId', { params: { id: 'set', sailplanId: 'headsail' } })
+      assert.equal(active.status, 409)
+      assert.match(active.body.error, /active sailplan/)
+      assert.equal(request('DELETE /polars/:id/sailplans/:sailplanId', { params: { id: 'set', sailplanId: 'storm-set' } }).status, 204)
+      assert.equal((await provider.getResource('set')).sailplans.some(plan => plan.id === 'storm-set'), false)
+      assert.equal(request('DELETE /polars/:id/sailplans/:sailplanId', { params: { id: 'set', sailplanId: 'storm-set' } }).status, 404)
+
+      // Duplicate ids and v1 targets are rejected.
+      assert.equal(request('PUT /polars/:id/sailplans/:sailplanId/metadata', {
+        params: { id: 'set', sailplanId: 'headsail' }, body: { id: 'headsail', name: 'Headsail' }
+      }).status, 200)
+      assert.equal(request('POST /polars/:id/sailplans', {
+        params: { id: 'plain' }, body: { content: JSON.stringify(v1Table()), name: 'Nope' }
+      }).status, 400)
+      assert.equal(request('POST /polars/:id/sailplans', {
+        params: { id: 'set' }, body: { content: JSON.stringify(polarSet()), name: 'Nope' }
+      }).status, 400)
     })
   })
 })

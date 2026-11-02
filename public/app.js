@@ -75,8 +75,9 @@ async function api(path, options) {
 
 // ── App state ─────────────────────────────────────────────────────────────────
 let polars = []
-let activeStatus = { id: null, exists: false, valid: false, errors: [] }
+let activeStatus = { id: null, sailplanId: null, exists: false, valid: false, errors: [] }
 let performanceFactor = 1
+let applyWaveCorrection = true
 let internetStatus = { online: false }
 let orcCached = false
 let lastFileImportError = ''
@@ -86,7 +87,10 @@ let orcQuery = ''
 let orcResults = null // null = no search run yet
 let activePage = 'active'
 let polarSort = { key: 'name', direction: 'asc' }
+// V2 rows whose sailplan sub-rows are shown in the selection table.
+const expandedPolars = new Set()
 let canvasObserver = null
+const curveRequests = new WeakMap()
 
 const POLAR_COLUMNS = [
   { key: 'name', label: 'Boat name', value: polar => polar.name || polar.id },
@@ -133,27 +137,40 @@ function buildPolarTable({ selectable = false, actions = false } = {}) {
       </tr>
     </thead>
     <tbody>
-      ${sortedPolars().map(polar => `
+      ${sortedPolars().map(polar => {
+        const v2 = polar.kind === 'polarSet'
+        const expanded = selectable && v2 && expandedPolars.has(polar.id)
+        const cells = POLAR_COLUMNS.map((column, index) => `<td>${
+          index === 0 && selectable
+            ? (v2
+              ? `<button type="button" class="btn btn-link btn-sm p-0 text-reset text-decoration-none polar-expand" data-expand="${escapeHtml(polar.id)}" aria-expanded="${expanded}" aria-label="${expanded ? 'Hide' : 'Show'} sailplans">${expanded ? '&#9662;' : '&#9656;'}</button>${escapeHtml(column.value(polar))}`
+              : `<span class="polar-expand"></span>${escapeHtml(column.value(polar))}`)
+            : escapeHtml(column.value(polar))
+        }</td>`).join('')
+        const sailplanRows = expanded
+          ? (polar.tables || []).map(choice => {
+            const sailplanId = choice.id ?? ''
+            const checked = polar.id === activeStatus.id && (activeStatus.sailplanId || '') === sailplanId
+            return `
+        <tr class="sailplan-row">
+          <td></td>
+          <td colspan="${POLAR_COLUMNS.length}" class="sailplan-cell"><label><input type="radio" name="activeSailplanRadio" data-polar-id="${escapeHtml(polar.id)}" data-sailplan-id="${escapeHtml(sailplanId)}" ${checked ? 'checked' : ''}>${escapeHtml(choice.name)}${choice.id === undefined ? '<span class="text-muted small"> (default)</span>' : ''}</label></td>
+        </tr>`
+          }).join('')
+          : ''
+        return `
         <tr>
           ${selectable ? `<td><input type="radio" name="activePolarRadio" data-id="${escapeHtml(polar.id)}" ${polar.id === activeStatus.id ? 'checked' : ''}></td>` : ''}
-          ${POLAR_COLUMNS.map(column => `<td>${escapeHtml(column.value(polar))}</td>`).join('')}
+          ${cells}
           ${actions ? `
             <td class="polar-actions">
-              <button class="btn btn-link btn-sm" data-action="modify" data-id="${escapeHtml(polar.id)}">Modify</button>
+              <button class="btn btn-link btn-sm" data-action="open" data-id="${escapeHtml(polar.id)}">Open</button>
               <button class="btn btn-link btn-sm" data-action="copy" data-id="${escapeHtml(polar.id)}">Copy</button>
-              <div class="dropdown d-inline">
-                <button class="btn btn-link btn-sm dropdown-toggle" type="button" data-dropdown-toggle>Export</button>
-                <div class="dropdown-menu dropdown-menu-right">
-                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/json" download>Canonical JSON</a>
-                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/jieter" download>Jieter text</a>
-                  <a class="dropdown-item" href="${BASE}/polars/${encodeURIComponent(polar.id)}/export/expedition" download>Expedition text</a>
-                </div>
-              </div>
               <button class="btn btn-link btn-sm text-danger" data-action="delete" data-id="${escapeHtml(polar.id)}">Delete</button>
             </td>
           ` : ''}
-        </tr>
-      `).join('')}
+        </tr>${sailplanRows}`
+      }).join('')}
     </tbody>
   `
   table.querySelectorAll('[data-sort-key]').forEach(button => {
@@ -162,6 +179,14 @@ function buildPolarTable({ selectable = false, actions = false } = {}) {
       polarSort = polarSort.key === key
         ? { key, direction: polarSort.direction === 'asc' ? 'desc' : 'asc' }
         : { key, direction: 'asc' }
+      rerender()
+    })
+  })
+  table.querySelectorAll('[data-expand]').forEach(button => {
+    button.addEventListener('click', () => {
+      const id = button.dataset.expand
+      if (expandedPolars.has(id)) expandedPolars.delete(id)
+      else expandedPolars.add(id)
       rerender()
     })
   })
@@ -177,6 +202,11 @@ async function loadPerformanceFactor() {
   performanceFactor = Number.isFinite(value) ? value : 1
 }
 
+async function loadWaveCorrection() {
+  const { apply } = await api('waveCorrection')
+  applyWaveCorrection = apply !== false
+}
+
 async function loadInternetStatus() { internetStatus = await api('internet') }
 
 async function loadOrcSourceStatus() {
@@ -188,7 +218,7 @@ async function loadOrcSourceStatus() {
 async function loadAll() {
   await Promise.all([
     loadPolars(), loadActiveStatus(), loadPerformanceFactor(),
-    loadInternetStatus(), loadOrcSourceStatus()
+    loadWaveCorrection(), loadInternetStatus(), loadOrcSourceStatus()
   ])
 }
 
@@ -276,9 +306,15 @@ function buildActivePage() {
     canvas.id = 'polarCanvas'
     canvas.className = 'polar-canvas'
     colGraph.appendChild(canvas)
+    const curveError = document.createElement('p')
+    curveError.className = 'text-danger small'
+    curveError.setAttribute('role', 'status')
+    colGraph.appendChild(curveError)
     const canvasInstance = new window.PolarCanvas(canvas)
     observeCanvasSize(canvas, canvasInstance)
-    loadOverviewCurves(activeStatus.id, canvasInstance)
+    // The graph always shows the shared selection, uncorrected: no performance
+    // factor and no wave correction are applied to it.
+    loadOverviewCurves(activeStatus.id, canvasInstance, activeStatus.sailplanId || undefined, curveError)
   } else {
     const placeholder = document.createElement('div')
     placeholder.className = 'text-muted small'
@@ -293,6 +329,12 @@ function buildActivePage() {
     dl.innerHTML = [
       ['Boat name', activePolar.name],
       ['ID', activePolar.id],
+      ['Format', activePolar.kind === 'polarSet' ? `v2 polarSet (${activePolar.schemaVersion})` : 'v1 polarTable'],
+      ['Sailplan', activePolar.kind === 'polarSet'
+        ? (activePolar.tables?.find(choice => (choice.id ?? null) === (activeStatus.sailplanId ?? null))?.name || activeStatus.sailplanId)
+        : undefined],
+      ['Sailplans', activePolar.kind === 'polarSet' ? String(Math.max((activePolar.tables?.length || 1) - 1, 0)) : undefined],
+      ['Wave correction', activePolar.kind === 'polarSet' ? (activePolar.hasWaveCorrection ? 'Included' : 'Not included') : undefined],
       ['Boat type', activePolar.boatType],
       ['Sail no.', activePolar.sailnumber],
       ['Year', activePolar.year],
@@ -309,37 +351,6 @@ function buildActivePage() {
     colDetails.appendChild(empty)
   }
 
-  colDetails.appendChild(sectionHeading('Polar adjustment'))
-  const adjWrap = document.createElement('div')
-  adjWrap.className = 'input-group'
-  adjWrap.style.maxWidth = '14rem'
-  adjWrap.innerHTML = `
-    <input type="number" id="performanceFactor" class="form-control form-control-sm" min="0" max="100" step="1" value="${Math.round(performanceFactor * 100)}">
-    <span class="input-group-text">%</span>
-  `
-  colDetails.appendChild(adjWrap)
-  const adjSave = document.createElement('button')
-  adjSave.className = 'btn btn-primary btn-sm mt-2'
-  adjSave.textContent = 'Save'
-  adjSave.addEventListener('click', async () => {
-    const percent = Number(colDetails.querySelector('#performanceFactor').value)
-    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
-      setMessage('Enter a performance factor from 0 to 100%', true)
-      return
-    }
-    try {
-      const { value } = await api('performanceFactor', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: percent / 100 })
-      })
-      performanceFactor = value
-      setMessage(`Polar adjustment set to ${Math.round(performanceFactor * 100)}%`)
-      await rerender()
-    } catch (e) {
-      setMessage(e.message, true)
-    }
-  })
-  colDetails.appendChild(adjSave)
-
   const warnings = []
   if (!activeStatus.id) {
     warnings.push('No active polar is selected.')
@@ -350,8 +361,78 @@ function buildActivePage() {
   }
   colDetails.appendChild(warningsSection(warnings))
 
+  // --- Adjustments card ---
+  // Shared consumer settings; they never change the graph above.
+  const adjustments = cardEl('Adjustments')
+  wrap.appendChild(adjustments.card)
+  const adjIntro = document.createElement('p')
+  adjIntro.className = 'text-muted small'
+  adjIntro.textContent = 'Shared with all polar consumers. The graph shows the uncorrected polar: neither adjustment changes it.'
+  adjustments.body.appendChild(adjIntro)
+
+  const factorLabel = document.createElement('label')
+  factorLabel.className = 'small'
+  factorLabel.setAttribute('for', 'performanceFactor')
+  factorLabel.textContent = 'Performance factor'
+  adjustments.body.appendChild(factorLabel)
+  const adjWrap = document.createElement('div')
+  adjWrap.className = 'input-group'
+  adjWrap.style.maxWidth = '14rem'
+  adjWrap.innerHTML = `
+    <input type="number" id="performanceFactor" class="form-control form-control-sm" min="0" max="100" step="1" value="${Math.round(performanceFactor * 100)}">
+    <span class="input-group-text">%</span>
+  `
+  adjustments.body.appendChild(adjWrap)
+  // Applied automatically on change (blur, Enter or spinner) — no Save button.
+  adjWrap.querySelector('#performanceFactor').addEventListener('change', async (event) => {
+    const percent = Number(event.target.value)
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      setMessage('Enter a performance factor from 0 to 100%', true)
+      event.target.value = Math.round(performanceFactor * 100)
+      return
+    }
+    try {
+      const { value } = await api('performanceFactor', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: percent / 100 })
+      })
+      performanceFactor = value
+      setMessage(`Polar adjustment set to ${Math.round(performanceFactor * 100)}%`)
+    } catch (e) {
+      setMessage(e.message, true)
+      event.target.value = Math.round(performanceFactor * 100)
+    }
+  })
+
+  const waveWrap = document.createElement('div')
+  const activeHasWaves = !!(activePolar && activePolar.kind === 'polarSet' && activePolar.hasWaveCorrection)
+  waveWrap.className = 'mt-3' + (activeHasWaves ? '' : ' wave-unavailable')
+  waveWrap.innerHTML = `
+    <label class="small d-block" for="applyWaveCorrection">Wave correction</label>
+    <label class="switch switch-text switch-primary mb-0">
+      <input type="checkbox" id="applyWaveCorrection" class="switch-input form-check-input" ${applyWaveCorrection ? 'checked' : ''} ${activeHasWaves ? '' : 'disabled'}>
+      <span class="switch-label" data-on="On" data-off="Off"></span>
+      <span class="switch-handle"></span>
+    </label>
+    <div class="form-text small text-muted">${activeHasWaves
+      ? 'Apply the active polar\u2019s wave correction when consumers supply sea state.'
+      : 'The active polar has no wave correction table; this setting has no effect on it.'}</div>
+  `
+  adjustments.body.appendChild(waveWrap)
+  waveWrap.querySelector('#applyWaveCorrection').addEventListener('change', async (event) => {
+    try {
+      const { apply } = await api('waveCorrection', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apply: event.target.checked })
+      })
+      applyWaveCorrection = apply
+      setMessage(`Wave correction ${apply ? 'enabled' : 'disabled'}`)
+    } catch (e) {
+      setMessage(e.message, true)
+      event.target.checked = applyWaveCorrection
+    }
+  })
+
   // --- Polar selection card ---
-  const selection = cardEl('Select polar')
+  const selection = cardEl('Select active polar')
   wrap.appendChild(selection.card)
 
   if (!polars.length) {
@@ -363,16 +444,30 @@ function buildActivePage() {
     const table = buildPolarTable({ selectable: true })
     selection.body.appendChild(table)
     table.addEventListener('change', async (event) => {
-      if (event.target.name !== 'activePolarRadio') return
+      const { name } = event.target
+      if (name !== 'activePolarRadio' && name !== 'activeSailplanRadio') return
+      // A polar radio selects the document with the default (best) sailplan; a
+      // sailplan radio selects document and sailplan in one atomic request.
+      const id = name === 'activePolarRadio' ? event.target.dataset.id : event.target.dataset.polarId
+      const sailplanId = name === 'activeSailplanRadio' ? event.target.dataset.sailplanId : ''
       try {
+        const polar = polarById(id)
+        const v2 = polar?.kind === 'polarSet'
         await api('activePolar', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: event.target.dataset.id })
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, ...(sailplanId ? { sailplanId } : {}), ...(v2 ? { acknowledgeV2: true } : {}) })
         })
         await loadActiveStatus()
-        setMessage(`Active polar set to '${event.target.dataset.id}'`)
+        if (v2) expandedPolars.add(id)
+        const sailplanName = sailplanId
+          ? polar?.tables?.find(choice => choice.id === sailplanId)?.name || sailplanId
+          : ''
+        setMessage(`Active polar set to '${id}'${sailplanName ? ` \u2014 ${sailplanName}` : ''}`)
         await rerender()
       } catch (e) {
         setMessage(e.message, true)
+        await rerender()
       }
     })
   }
@@ -380,12 +475,19 @@ function buildActivePage() {
   return wrap
 }
 
-async function loadOverviewCurves(id, canvas) {
+async function loadOverviewCurves(id, canvas, sailplanId, errorEl) {
+  const request = {}
+  curveRequests.set(canvas, request)
+  canvas.loadCurves({ curves: [] })
+  if (errorEl) errorEl.textContent = ''
   try {
-    const curves = await api(`polars/${encodeURIComponent(id)}/curves?step=5&corrected=true`)
-    canvas.loadCurves(curves)
+    const selection = sailplanId === undefined ? '' : `&sailplanId=${encodeURIComponent(sailplanId)}`
+    const curves = await api(`polars/${encodeURIComponent(id)}/curves?step=5${selection}`)
+    if (curveRequests.get(canvas) === request) canvas.loadCurves(curves)
   } catch (e) {
-    setMessage(e.message, true)
+    if (curveRequests.get(canvas) !== request) return
+    if (errorEl) errorEl.textContent = e.message
+    else setMessage(e.message, true)
   }
 }
 
@@ -421,27 +523,15 @@ function buildManagementPage() {
 
   const table = buildPolarTable({ actions: true })
   stored.body.appendChild(table)
+  stored.body.appendChild(warningsSection(polars.filter(polar => polar.error).map(polar => `${polar.id}: ${polar.error}`)))
 
   table.addEventListener('click', async (event) => {
-    const toggle = event.target.closest('[data-dropdown-toggle]')
-    if (toggle) {
-      event.preventDefault()
-      const menu = toggle.nextElementSibling
-      const isOpen = menu.classList.contains('show')
-      table.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'))
-      if (!isOpen) menu.classList.add('show')
-      return
-    }
-    if (event.target.closest('.dropdown-item')) {
-      table.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'))
-      return
-    }
     const target = event.target.closest('[data-action]')
     if (!target) return
     const { action, id } = target.dataset
     try {
-      if (action === 'modify') {
-        showModifyPolar(polarById(id))
+      if (action === 'open') {
+        await showPolarDocument(id)
         return
       }
       if (action === 'copy') await copyPolar(id)
@@ -455,58 +545,333 @@ function buildManagementPage() {
   return wrap
 }
 
-function showModifyPolar(polar) {
-  const editor = cardEl('Modify polar')
-  const form = document.createElement('form')
-  form.innerHTML = `
+// ── Open document view ─────────────────────────────────────────────────────────
+// One card for everything about a stored polar: editable metadata, table
+// display/export, sailplan editing (v2), wave correction (v2) and the
+// complete-document export.
+async function showPolarDocument(polarId) {
+  let documentBody
+  try {
+    documentBody = await api(`polars/${encodeURIComponent(polarId)}`)
+  } catch (e) {
+    setMessage(e.message, true)
+    return
+  }
+  const v2 = documentBody.kind === 'polarSet'
+  const reopen = async (id = polarId) => {
+    await Promise.all([loadPolars(), loadActiveStatus(), loadWaveCorrection()])
+    await showPolarDocument(id)
+  }
+  const view = cardEl(`Polar \u2014 ${documentBody.name || polarId}`)
+  const body = view.body
+
+  // --- Metadata ---
+  body.appendChild(sectionHeading('Metadata'))
+  const info = document.createElement('p')
+  info.className = 'small text-muted'
+  info.textContent = [
+    v2 ? `Format: v2 polarSet (${documentBody.schemaVersion})` : 'Format: v1 polarTable',
+    documentBody.source ? `Source: ${documentBody.source}` : ''
+  ].filter(Boolean).join(' \u2022 ')
+  body.appendChild(info)
+  const metaForm = document.createElement('form')
+  metaForm.innerHTML = `
     <fieldset>
       <div class="row">
         ${POLAR_COLUMNS.filter(column => column.key !== 'source').map(column => `
           <div class="col-md-6 mb-3">
-            <label class="small" for="modify-${column.key}">${column.label}</label>
-            <input class="form-control form-control-sm" id="modify-${column.key}" name="${column.key}"
+            <label class="small" for="meta-${column.key}">${column.label}</label>
+            <input class="form-control form-control-sm" id="meta-${column.key}" name="${column.key}"
               type="${column.key === 'year' ? 'number' : 'text'}"
               ${column.key === 'year' ? 'step="1"' : ''}
               ${column.key === 'id' ? 'required maxlength="100"' : ''}
-              value="${escapeHtml(polar[column.key] ?? '')}">
+              value="${escapeHtml((column.key === 'id' ? polarId : documentBody[column.key]) ?? '')}">
           </div>
         `).join('')}
+        <div class="col-md-6 mb-3">
+          <label class="small" for="meta-notes">Notes</label>
+          <input class="form-control form-control-sm" id="meta-notes" name="notes" type="text"
+            value="${escapeHtml(documentBody.notes ?? '')}">
+        </div>
       </div>
       <div class="alert alert-danger small" role="alert" hidden></div>
-      <button type="submit" class="btn btn-primary btn-sm">Save</button>
-      <button type="button" class="btn btn-secondary btn-sm ms-2" data-action="cancel">Cancel</button>
+      <button type="submit" class="btn btn-primary btn-sm">Save metadata</button>
     </fieldset>
   `
-  form.querySelector('[data-action="cancel"]').addEventListener('click', () => rerender())
-  form.addEventListener('submit', async event => {
+  metaForm.addEventListener('submit', async event => {
     event.preventDefault()
-    if (!form.reportValidity()) return
-    const fieldset = form.querySelector('fieldset')
-    const error = form.querySelector('[role="alert"]')
-    const data = new FormData(form)
-    const metadata = Object.fromEntries(data)
+    if (!metaForm.reportValidity()) return
+    const fieldset = metaForm.querySelector('fieldset')
+    const error = metaForm.querySelector('[role="alert"]')
+    const metadata = Object.fromEntries(new FormData(metaForm))
     metadata.year = metadata.year === '' ? null : Number(metadata.year)
     error.hidden = true
     fieldset.disabled = true
     try {
-      const { id } = await api(`polars/${encodeURIComponent(polar.id)}/metadata`, {
+      const { id } = await api(`polars/${encodeURIComponent(polarId)}/metadata`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(metadata)
       })
-      await Promise.all([loadPolars(), loadActiveStatus()])
       setMessage(`Saved '${id}'`)
-      if (activePage === 'management') await rerender()
+      await reopen(id)
     } catch (e) {
       error.textContent = e.message
       error.hidden = false
-      setMessage(e.message, true)
-    } finally {
       fieldset.disabled = false
     }
   })
-  editor.body.appendChild(form)
-  const body = document.getElementById('card-body')
-  body.replaceChildren(editor.card)
-  form.querySelector('input').focus()
+  body.appendChild(metaForm)
+
+  // --- Tables ---
+  body.appendChild(sectionHeading('Tables'))
+  const choices = v2
+    ? [{ name: 'Best performance', table: documentBody.best }, ...(documentBody.sailplans || [])]
+    : [{ name: 'Polar table', table: documentBody }]
+  const tables = document.createElement('div')
+  tables.innerHTML = `
+    ${v2 ? `
+    <label for="docTable">Table</label>
+    <div class="d-flex align-items-center mb-1">
+      <select id="docTable" class="form-select form-select-sm" style="max-width:20rem">
+        ${choices.map((choice, index) => `<option value="${index}">${escapeHtml(choice.name)}</option>`).join('')}
+      </select>
+      <button class="btn btn-danger btn-sm ms-2" data-table-delete hidden>Delete</button>
+    </div>
+    <p data-table-error class="text-danger small" role="alert"></p>` : ''}
+    <div data-sailplan-editor class="mb-2"></div>
+    <div class="row"><div class="col-md-5 col-lg-4"><canvas class="polar-canvas"></canvas></div></div>
+    <div data-curve-error class="text-danger small" role="status"></div>
+    <div data-table></div>
+    <h6 class="mt-3">Export selected table</h6>
+    <p class="small">Exports only the boat speeds of the selected table.</p>
+    <select data-export-format class="form-select form-select-sm mb-2" aria-label="Selected-table export format">
+      <option value="expedition">Expedition text</option>
+      <option value="jieter">Jieter text</option>
+      <option value="json-v1">Canonical v1 table${v2 ? ' (lossy projection)' : ''}</option>
+    </select>
+    <div><button class="btn btn-primary btn-sm" data-export-table>Export selected table</button></div>
+    <p data-export-error class="text-danger small mt-2" role="alert"></p>
+    ${v2 ? `
+    <h6 class="mt-3">Add sailplan specific table</h6>
+    <div class="row">
+      <div class="col-md-4 mb-2"><input data-sailplan-name class="form-control form-control-sm" placeholder="Sailplan name" aria-label="New sailplan name"></div>
+      <div class="col-md-5 mb-2"><input type="file" data-sailplan-file class="form-control form-control-sm" aria-label="Single-table polar file"></div>
+      <div class="col-md-3 mb-2"><button class="btn btn-primary btn-sm" data-sailplan-add>Add sailplan</button></div>
+    </div>
+    <p class="form-text small text-muted">Single-table formats (canonical v1 JSON, Jieter, Expedition, TimeZero) are detected automatically; the table keeps its own wind grid.</p>
+    <p data-sailplan-error class="text-danger small" role="alert"></p>` : ''}
+  `
+  body.appendChild(tables)
+  const select = tables.querySelector('#docTable')
+  const selectedIndex = () => (select ? Number(select.value) : 0)
+  const canvas = new window.PolarCanvas(tables.querySelector('canvas'))
+  let generation = 0
+
+  const renderSailplanEditor = () => {
+    const editor = tables.querySelector('[data-sailplan-editor]')
+    const choice = choices[selectedIndex()]
+    if (!v2 || choice.id === undefined) {
+      editor.innerHTML = ''
+      return
+    }
+    editor.innerHTML = `
+      <div class="row align-items-end">
+        <div class="col-md-3 mb-2"><label class="small" for="sp-id">Sailplan ID</label>
+          <input id="sp-id" data-sp-id class="form-control form-control-sm" value="${escapeHtml(choice.id)}"></div>
+        <div class="col-md-3 mb-2"><label class="small" for="sp-name">Name</label>
+          <input id="sp-name" data-sp-name class="form-control form-control-sm" value="${escapeHtml(choice.name)}"></div>
+        <div class="col-md-4 mb-2"><label class="small" for="sp-notes">Notes</label>
+          <input id="sp-notes" data-sp-notes class="form-control form-control-sm" value="${escapeHtml(choice.notes ?? '')}"></div>
+        <div class="col-md-2 mb-2">
+          <button class="btn btn-primary btn-sm" data-sp-save>Save</button>
+        </div>
+      </div>
+      <p data-sp-error class="text-danger small" role="alert"></p>
+    `
+    editor.querySelector('[data-sp-save]').addEventListener('click', async () => {
+      const payload = {
+        id: editor.querySelector('[data-sp-id]').value.trim(),
+        name: editor.querySelector('[data-sp-name]').value.trim(),
+        notes: editor.querySelector('[data-sp-notes]').value
+      }
+      try {
+        await api(`polars/${encodeURIComponent(polarId)}/sailplans/${encodeURIComponent(choice.id)}/metadata`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        })
+        setMessage(`Saved sailplan '${payload.id}'`)
+        await reopen()
+      } catch (e) {
+        editor.querySelector('[data-sp-error]').textContent = e.message
+      }
+    })
+  }
+
+  const render = async () => {
+    const current = ++generation
+    const choice = choices[selectedIndex()]
+    const table = choice.table
+    const number = (value, factor = 1, digits = 2) => value === null || value === undefined ? '-' : (value * factor).toFixed(digits)
+    const knots = 3600 / 1852
+    const degrees = 180 / Math.PI
+    const quantities = [['boatSpeedMatrix', 'Boat speed (kn)', knots], ['heelMatrix', 'Heel (deg)', degrees], ['reefMatrix', 'Reef factor', 1], ['flatMatrix', 'Flat factor', 1]]
+    tables.querySelector('[data-table]').innerHTML = `
+      ${choice.sails ? `<p class="small">${choice.sails.map(sail => escapeHtml(`${sail.name}${sail.sourceId ? ` / source ${sail.sourceId}` : ''}${sail.area ? ` / ${sail.area} m2` : ''}`)).join('; ')}</p>` : ''}
+      ${quantities.filter(([key]) => table.values[key]).map(([key, title, factor]) => `
+        <h6 class="mt-3">${title}</h6><div class="table-responsive"><table class="table table-sm">
+        <thead><tr><th>TWS (kn) / TWA (deg)</th>${table.axes.twa.map(twa => `<th>${number(twa, degrees, 1)}</th>`).join('')}</tr></thead>
+        <tbody>${table.axes.tws.map((tws, row) => `<tr><th>${number(tws, knots)}</th>${table.values[key][row].map(value => `<td>${number(value, factor, key === 'reefMatrix' || key === 'flatMatrix' ? 4 : 2)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`).join('')}
+      <h6>Supplied targets (not recalculated from the grid)</h6>
+      <div class="table-responsive"><table class="table table-sm"><thead><tr><th>TWS (kn)</th><th>Role</th><th>TWA (deg)</th><th>Speed (kn)</th><th>VMG magnitude (kn)</th><th>Heel (deg)</th><th>Reef</th><th>Flat</th></tr></thead>
+      <tbody>${(table.derived?.rows || []).flatMap(row => ['beat', 'run'].map(role => {
+        const target = row[role]
+        return `<tr><th>${number(row.tws, knots)}</th><td>${role}</td><td>${number(target?.twa, degrees)}</td><td>${number(target?.tbs, knots)}</td><td>${number(target?.vmg, knots)}</td><td>${number(target?.heel, degrees)}</td><td>${number(target?.reef, 1, 4)}</td><td>${number(target?.flat, 1, 4)}</td></tr>`
+      })).join('')}</tbody></table></div>`
+    renderSailplanEditor()
+    const deleteButton = tables.querySelector('[data-table-delete]')
+    if (deleteButton) deleteButton.hidden = choice.id === undefined
+    const errorEl = tables.querySelector('[data-curve-error]')
+    errorEl.textContent = ''
+    canvas.loadCurves({ curves: [] })
+    try {
+      const selection = choice.id === undefined ? '' : `&sailplanId=${encodeURIComponent(choice.id)}`
+      const result = await api(`polars/${encodeURIComponent(polarId)}/curves?step=5${selection}`)
+      if (current === generation) canvas.loadCurves(result)
+    } catch (error) {
+      if (current === generation) errorEl.textContent = error.message
+    }
+  }
+  select?.addEventListener('change', render)
+
+  tables.querySelector('[data-table-delete]')?.addEventListener('click', async () => {
+    const choice = choices[selectedIndex()]
+    if (choice.id === undefined) return
+    const errorEl = tables.querySelector('[data-table-error]')
+    errorEl.textContent = ''
+    if (!window.confirm(`Delete sailplan '${choice.name}'?`)) return
+    try {
+      await api(`polars/${encodeURIComponent(polarId)}/sailplans/${encodeURIComponent(choice.id)}`, { method: 'DELETE' })
+      setMessage(`Deleted sailplan '${choice.name}'`)
+      await reopen()
+    } catch (e) {
+      errorEl.textContent = e.message
+    }
+  })
+
+  tables.querySelector('[data-export-table]').addEventListener('click', async () => {
+    const errorEl = tables.querySelector('[data-export-error]')
+    errorEl.textContent = ''
+    const format = tables.querySelector('[data-export-format]').value
+    const choice = choices[selectedIndex()]
+    const query = new URLSearchParams({ scope: 'table', acknowledgeLoss: 'true' })
+    if (choice.id !== undefined) query.set('sailplanId', choice.id)
+    try {
+      const text = await api(`polars/${encodeURIComponent(polarId)}/export/${format}?${query}`)
+      const blob = new Blob([typeof text === 'string' ? text : JSON.stringify(text, null, 2)], { type: format === 'json-v1' ? 'application/json' : 'text/plain' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${polarId}-${selectedIndex()}.${format === 'json-v1' ? 'json' : 'txt'}`
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (error) {
+      errorEl.textContent = error.message
+    }
+  })
+
+  tables.querySelector('[data-sailplan-add]')?.addEventListener('click', async () => {
+    const errorEl = tables.querySelector('[data-sailplan-error]')
+    errorEl.textContent = ''
+    const name = tables.querySelector('[data-sailplan-name]').value.trim()
+    const file = tables.querySelector('[data-sailplan-file]').files[0]
+    if (!name) { errorEl.textContent = 'Enter a sailplan name.'; return }
+    if (!file) { errorEl.textContent = 'Choose a single-table polar file.'; return }
+    try {
+      const content = await readFileAsText(file)
+      const { id } = await api(`polars/${encodeURIComponent(polarId)}/sailplans`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, name })
+      })
+      setMessage(`Added sailplan '${id}'`)
+      await reopen()
+    } catch (e) {
+      errorEl.textContent = e.message
+    }
+  })
+
+  // --- Wave correction (v2 only) ---
+  if (v2) {
+    body.appendChild(sectionHeading('Wave correction'))
+    const wave = document.createElement('div')
+    const current = documentBody.waveCorrection
+    const summary = current
+      ? (() => {
+        const heights = current.heights.map(layer => layer.significantWaveHeight)
+        const periods = current.heights.flatMap(layer => layer.axes.wavePeriod)
+        return `${current.heights.length} height layer(s), ${Math.min(...heights)}\u2013${Math.max(...heights)} m, wave periods ${Math.min(...periods)}\u2013${Math.max(...periods)} s.`
+      })()
+      : 'No wave correction table available.'
+    wave.innerHTML = `
+      <p class="small mb-2">${escapeHtml(summary)}</p>
+      <div class="row">
+        <div class="col-md-5 mb-2"><input type="file" data-wave-file class="form-control form-control-sm" aria-label="Wave correction file"></div>
+        <div class="col-md-7 mb-2">
+          <button class="btn btn-primary btn-sm" data-wave-import>Import${current ? ' (replace)' : ''}</button>
+          ${current ? `<button class="btn btn-primary btn-sm" data-wave-export>Export JSON</button>
+          <button class="btn btn-link btn-sm text-danger" data-wave-delete>Remove</button>` : ''}
+        </div>
+      </div>
+      <p class="form-text small text-muted">TimeZero Wave_Polar.xml or a canonical JSON fragment, detected automatically. Import replaces the whole correction; missing factors are never filled.</p>
+      <p data-wave-error class="text-danger small" role="alert"></p>
+    `
+    body.appendChild(wave)
+    wave.querySelector('[data-wave-import]').addEventListener('click', async () => {
+      const errorEl = wave.querySelector('[data-wave-error]')
+      errorEl.textContent = ''
+      const file = wave.querySelector('[data-wave-file]').files[0]
+      if (!file) { errorEl.textContent = 'Choose a wave-correction file.'; return }
+      try {
+        const content = await readFileAsText(file)
+        const { heights } = await api(`polars/${encodeURIComponent(polarId)}/waveCorrection/import`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content })
+        })
+        setMessage(`Imported wave correction (${heights} height layers)`)
+        await reopen()
+      } catch (e) {
+        errorEl.textContent = e.message
+      }
+    })
+    wave.querySelector('[data-wave-export]')?.addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify({ waveCorrection: current }, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${polarId}-wave-correction.json`
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    })
+    wave.querySelector('[data-wave-delete]')?.addEventListener('click', async () => {
+      if (!window.confirm('Remove the wave correction from this polar?')) return
+      try {
+        await api(`polars/${encodeURIComponent(polarId)}/waveCorrection`, { method: 'DELETE' })
+        setMessage('Wave correction removed')
+        await reopen()
+      } catch (e) {
+        wave.querySelector('[data-wave-error]').textContent = e.message
+      }
+    })
+  }
+
+  // --- Document ---
+  body.appendChild(sectionHeading('Document'))
+  const footer = document.createElement('div')
+  footer.innerHTML = `
+    <a class="btn btn-primary btn-sm" href="${BASE}/polars/${encodeURIComponent(polarId)}/export/json" download>Export complete canonical JSON</a>
+    <button class="btn btn-primary btn-sm ms-2" data-close-view>Close</button>
+  `
+  footer.querySelector('[data-close-view]').addEventListener('click', () => rerender())
+  body.appendChild(footer)
+
+  document.getElementById('card-body').replaceChildren(view.card)
+  observeCanvasSize(tables.querySelector('canvas'), canvas)
+  await render()
 }
 
 async function copyPolar(id) {
@@ -528,13 +893,19 @@ async function deletePolar(id) {
 }
 
 // ── Import page ────────────────────────────────────────────────────────────────
-function readFileAsText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = () => reject(reader.error)
-    reader.readAsText(file)
-  })
+// Decodes an uploaded file as text. Some sources (e.g. TimeZero) write UTF-16
+// with or without a BOM despite their declared encodings; plain UTF-8 decoding
+// would NUL-pad every character and break format detection.
+async function readFileAsText(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let encoding = 'utf-8'
+  if (bytes.length >= 2) {
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = 'utf-16le'
+    else if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = 'utf-16be'
+    else if (bytes[0] !== 0 && bytes[1] === 0) encoding = 'utf-16le'
+    else if (bytes[0] === 0 && bytes[1] !== 0) encoding = 'utf-16be'
+  }
+  return new TextDecoder(encoding).decode(bytes)
 }
 
 // The server auto-detects the format, so no format picker is offered.
@@ -556,7 +927,7 @@ function buildImportPage() {
     <div class="form-group mb-2">
       <label>File</label>
       <input type="file" id="fileImportFile" class="form-control form-control-sm">
-      <div class="form-text small text-muted">Canonical JSON, Jieter, Expedition or TimeZero Wind_Polar.xml — the format is detected automatically.</div>
+      <div class="form-text small text-muted">Canonical v1/v2 JSON, Jieter, Expedition, TimeZero Wind_Polar.xml or ORC speed-guide HTML — detected automatically. ORC HTML imports v2; exact 0.01-knot ORC placeholders become unavailable, not real targets.</div>
     </div>
   `
   fileCard.body.appendChild(fileFormWrap)
@@ -590,7 +961,7 @@ function buildImportPage() {
     <div class="form-group mb-2">
       <label>Text</label>
       <textarea id="textImportText" class="form-control form-control-sm" rows="6"></textarea>
-      <div class="form-text small text-muted">Canonical JSON, Jieter, Expedition or TimeZero Wind_Polar.xml — the format is detected automatically.</div>
+      <div class="form-text small text-muted">Canonical v1/v2 JSON, Jieter, Expedition, TimeZero Wind_Polar.xml or ORC speed-guide HTML — detected automatically. Standalone SYLK is not supported.</div>
     </div>
   `
   textCard.body.appendChild(textFormWrap)
@@ -741,14 +1112,12 @@ async function init() {
       document.body.classList.toggle('sidebar-hidden')
     }
   })
-  document.addEventListener('click', (event) => {
-    if (!event.target.closest('.dropdown')) {
-      document.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'))
-    }
-  })
 
   try {
     await loadAll()
+    if (activeStatus.id && polarById(activeStatus.id)?.kind === 'polarSet') {
+      expandedPolars.add(activeStatus.id)
+    }
   } catch (e) {
     setMessage(e.message, true)
   }

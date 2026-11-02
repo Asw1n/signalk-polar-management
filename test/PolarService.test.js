@@ -8,6 +8,7 @@ const path = require('path')
 const { Polar } = require('polar-math')
 const PolarStore = require('../lib/PolarStore')
 const PolarService = require('../lib/PolarService')
+const { polarSet } = require('./fixtures/polarSet')
 
 function table(speed = 4) {
   return {
@@ -35,6 +36,126 @@ describe('live polar service', () => {
   afterEach(() => {
     service.stop()
     fs.rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('prepares v2 best for existing live handles or explicitly reports unsupported math', (t) => {
+    const document = polarSet()
+    store.save('set', document)
+    const prepare = typeof Polar.fromPolarSet === 'function' ? t.mock.method(Polar, 'fromPolarSet') : null
+    const handle = service.api.polar('set', { performanceFactor: 0.8 })
+    if (!prepare) {
+      for (const method of ['speedAt', 'vmgAt', 'targetsAt', 'rangeAt']) {
+        assert.equal(handle[method]({ tws: 4, twa: Math.PI / 3 }).state.reason, 'unsupported_math')
+      }
+      assert.match(errors.at(-1), /Polar.fromPolarSet/)
+      store.modify('set', { id: 'set', name: 'Updated' })
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).state.reason, 'unsupported_math')
+    } else {
+      assert.equal(prepare.mock.callCount(), 1)
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 1.6)
+      const target = handle.targetsAt({ tws: 4 }).value.beat
+      assert.equal(target.heel, 0.12)
+      assert.equal(target.reef, 1.0006)
+      assert.equal(target.flat, 1)
+      const waveSpeed = handle.speedAt({
+        tws: 4, twa: Math.PI / 3,
+        seaState: { significantWaveHeight: 1, wavePeriod: 5, waveAngle: 0 }
+      }).value
+      assert.ok(Math.abs(waveSpeed - 1.28) < 1e-12)
+      const active = service.api.activePolar()
+      settings.activePolar = 'set'
+      service.notify({ type: 'selection' })
+      settings.performanceFactor = 0.5
+      assert.equal(active.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 1)
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 1.6)
+      store.modify('set', { id: 'set', name: 'Updated' })
+      assert.equal(prepare.mock.callCount(), 2)
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 1.6)
+      document.best.values.boatSpeedMatrix[0][0] = 4
+      store.save('set', document)
+      assert.equal(handle.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 3.2)
+      assert.equal(prepare.mock.callCount(), 3)
+      assert.ok(prepare.mock.calls.every(call => call.arguments[1] === undefined))
+      assert.deepEqual(errors, [])
+    }
+    service.stop()
+    assert.equal(handle.speedAt({ tws: 4, twa: 1 }).state.reason, 'provider_stopped')
+  })
+
+  it('does not present malformed v2 documents as unsupported math or keep stale prepared data', () => {
+    const handle = service.api.polar('first')
+    const document = polarSet()
+    document.best.values.boatSpeedMatrix[0].pop()
+    fs.writeFileSync(path.join(directory, 'first.json'), JSON.stringify(document))
+    service.refresh('first')
+    assert.equal(handle.speedAt({ tws: 4, twa: 1 }).state.reason, 'invalid_polar')
+    assert.match(errors.at(-1), /Cannot prepare polar/)
+  })
+
+  it('follows the shared active sailplan on every call and prepares each selection once', (t) => {
+    const document = polarSet()
+    document.sailplans[0].table.values.boatSpeedMatrix[0][0] = 2.5
+    store.save('set', document)
+    if (typeof Polar.fromPolarSet !== 'function') {
+      settings.activePolar = 'set'
+      settings.activeSailplan = 'jib'
+      service.notify({ type: 'selection' })
+      assert.equal(service.api.activePolar().speedAt({ tws: 4, twa: 1 }).state.reason, 'unsupported_math')
+      return
+    }
+    const prepare = t.mock.method(Polar, 'fromPolarSet')
+    const active = service.api.activePolar()
+    const input = { tws: 4, twa: Math.PI / 3 }
+    settings.activePolar = 'set'
+    service.notify({ type: 'selection' })
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.9) < 1e-12)
+    settings.activeSailplan = 'jib'
+    service.notify({ type: 'selection' })
+    assert.ok(Math.abs(active.speedAt(input).value - 2.5 * 0.9) < 1e-12)
+    assert.equal(prepare.mock.calls.at(-1).arguments[1], 'jib')
+    settings.activeSailplan = ''
+    service.notify({ type: 'selection' })
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.9) < 1e-12)
+    const count = prepare.mock.callCount()
+    settings.activeSailplan = 'jib'
+    service.notify({ type: 'selection' })
+    assert.ok(Math.abs(active.speedAt(input).value - 2.5 * 0.9) < 1e-12)
+    assert.equal(prepare.mock.callCount(), count)
+    assert.deepEqual(errors, [])
+  })
+
+  it('applies the shared wave-correction toggle to active handles only', () => {
+    store.save('set', polarSet())
+    if (typeof Polar.fromPolarSet !== 'function') return
+    settings.activePolar = 'set'
+    service.notify({ type: 'selection' })
+    const active = service.api.activePolar()
+    const input = { tws: 4, twa: Math.PI / 3, seaState: { significantWaveHeight: 1, wavePeriod: 5, waveAngle: 0 } }
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.8 * 0.9) < 1e-12)
+    settings.applyWaveCorrection = false
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.9) < 1e-12)
+    // Specific handles ignore shared settings: supplied seaState is always
+    // applied, omitted seaState never is.
+    const specific = service.api.polar('set')
+    assert.ok(Math.abs(specific.speedAt(input).value - 1.6) < 1e-12)
+    assert.equal(specific.speedAt({ tws: 4, twa: Math.PI / 3 }).value, 2)
+    settings.applyWaveCorrection = true
+    assert.ok(Math.abs(active.speedAt(input).value - 2 * 0.8 * 0.9) < 1e-12)
+  })
+
+  it('supports fixed-sailplan handles and reports unknown sailplans explicitly', () => {
+    const document = polarSet()
+    document.sailplans[0].table.values.boatSpeedMatrix[0][0] = 2.5
+    store.save('set', document)
+    assert.throws(() => service.api.polar('set', { sailplanId: '' }), TypeError)
+    assert.throws(() => service.api.polar('set', { sailplanId: 7 }), TypeError)
+    const missing = service.api.polar('set', { sailplanId: 'nope' })
+    assert.equal(missing.speedAt({ tws: 4, twa: 1 }).state.reason, 'sailplan_not_found')
+    assert.match(errors.at(-1), /Unknown sailplan: nope/)
+    if (typeof Polar.fromPolarSet === 'function') {
+      const jib = service.api.polar('set', { sailplanId: 'jib', performanceFactor: 0.8 })
+      assert.ok(Math.abs(jib.speedAt({ tws: 4, twa: Math.PI / 3 }).value - 2.5 * 0.8) < 1e-12)
+    }
   })
 
   it('prepares only the active table at startup even with 200 stored polars', (t) => {
@@ -127,6 +248,64 @@ describe('live polar service', () => {
     assert.ok(Object.isFrozen(active))
     assert.equal(active.entries, undefined)
     assert.deepEqual(errors, [])
+  })
+
+  it('describes the current selection with metadata, sailplan, factor and TWS axis', () => {
+    const active = service.api.activePolar()
+    const description = active.describe()
+    assert.equal(description.available, true)
+    assert.equal(description.id, 'first')
+    assert.equal(description.sailplanId, null)
+    assert.equal(description.performanceFactor, 0.9)
+    assert.equal(description.name, null)
+    assert.deepEqual(description.twsAxis, [5, 10])
+    assert.ok(Object.isFrozen(description))
+    assert.ok(Object.isFrozen(description.twsAxis))
+
+    // Active descriptions mirror shared settings per call, without reacquisition
+    settings.performanceFactor = 0.5
+    assert.equal(active.describe().performanceFactor, 0.5)
+    store.modify('first', { id: 'first', name: 'Named boat' })
+    assert.equal(active.describe().name, 'Named boat')
+
+    // Specific descriptions are fixed to the handle's own choices
+    const specific = service.api.polar('second', { performanceFactor: 0.8 })
+    assert.equal(specific.describe().id, 'second')
+    assert.equal(specific.describe().performanceFactor, 0.8)
+    settings.activePolar = 'second'
+    service.notify({ type: 'selection' })
+    assert.equal(specific.describe().performanceFactor, 0.8)
+
+    // Unavailability mirrors the calculation methods' reasons
+    settings.activePolar = ''
+    assert.deepEqual({ ...active.describe() }, { available: false, reason: 'no_active_polar' })
+    settings.activePolar = 'missing'
+    service.notify({ type: 'selection' })
+    assert.equal(active.describe().reason, 'polar_not_found')
+    service.stop()
+    assert.equal(active.describe().reason, 'provider_stopped')
+    assert.equal(specific.describe().reason, 'provider_stopped')
+  })
+
+  it('describes v2 selections including the active sailplan and its table axis', () => {
+    if (typeof Polar.fromPolarSet !== 'function') return
+    store.save('set', polarSet())
+    settings.activePolar = 'set'
+    settings.activeSailplan = 'jib'
+    service.notify({ type: 'selection' })
+    const description = service.api.activePolar().describe()
+    assert.equal(description.available, true)
+    assert.equal(description.id, 'set')
+    assert.equal(description.sailplanId, 'jib')
+    assert.equal(description.name, 'Root boat')
+    assert.equal(description.boatType, 'Test')
+    assert.equal(description.sailnumber, 'NL 1')
+    assert.equal(description.year, 2024)
+    assert.equal(description.source, 'Test source')
+    assert.equal(description.notes, 'Root notes')
+    assert.deepEqual(description.twsAxis, [4, 6])
+    settings.activeSailplan = ''
+    assert.equal(service.api.activePolar().describe().sailplanId, null)
   })
 
   it('defaults specific handles to 1 and fixes explicit factors independently of shared settings', () => {

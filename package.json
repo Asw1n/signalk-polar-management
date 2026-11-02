@@ -1,6 +1,6 @@
 {
   "name": "signalk-polar-management",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Stores, imports, exports and selects polar tables as a Signal K resource provider.",
   "keywords": [
     "signalk-node-server-plugin",
@@ -41,8 +41,8 @@
     ]
   },
   "dependencies": {
-    "polar-format": "^1.0.0",
-    "polar-math": "^1.1.1"
+    "polar-format": "^2.0.0",
+    "polar-math": "^1.2.0"
   },
   "author": "Aswin Bouwmeester <aswin.bouwmeester@gmail.com>",
   "license": "Apache-2.0",

@@ -46,6 +46,8 @@ describe('OrcSource RMS import', () => {
   it('maps RMS allowances to the canonical matrix and derived targets within certificate display precision', () => {
     const resource = createSource().parseRmsJson(JSON.stringify(rmsPayload()), entry)
 
+    assert.equal(resource.kind, 'polarTable')
+    assert.equal(resource.schemaVersion, '1.0.0')
     assert.deepEqual(resource.axes.tws, [6 * KNOT_TO_MPS, 10 * KNOT_TO_MPS])
     assert.deepEqual(resource.axes.twa, [52, 110].map(value => value * Math.PI / 180))
     assert.ok(Math.abs(resource.values.boatSpeedMatrix[0][0] - (3600 / 657.9) * KNOT_TO_MPS) <= PARITY_TOLERANCE_MPS)
