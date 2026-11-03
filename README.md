@@ -265,7 +265,7 @@ The rename API remains available for compatibility.
 
 This plugin is most useful when used together with other sailing apps in Signal K. Those apps can do the actual performance calculations, routing help, or sailing analysis, but they need a good polar to work with.
 
-## In-process calculations for other plugins
+## In-process service for other plugins
 
 Plugins in the same Signal K server can discover the versioned `polarManagement`
 service through PropertyValues and retain live calculation handles. An active
@@ -273,6 +273,16 @@ handle automatically follows the current selection and shared performance factor
 on every call. A specific-polar handle follows that stored table, using factor 1
 unless an explicit factor is supplied. Optional change subscriptions let consumers
 react without being required to keep calculations current.
+
+The same service also provides read-only catalog and inspection methods:
+`listPolars()` returns lightweight summaries without validation or active flags,
+`getPolar(id)` returns the complete stored document with validation diagnostics
+(including readable invalid documents), and `getSelection()` returns configured
+shared selection and adjustments. Each call returns a fresh, deeply frozen
+`{ value, state }` result. `service.onChange(callback)` observes all managed
+document and shared-setting changes. These additive methods remain at API
+version 1; consumers must feature-detect them. Listing and document reads may
+perform filesystem I/O and belong outside high-frequency calculation loops.
 
 For example, inside a consumer plugin:
 

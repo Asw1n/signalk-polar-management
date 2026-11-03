@@ -164,6 +164,13 @@ describe('plugin lifecycle', () => {
     const first = early.at(-1)
     assert.equal(first.apiVersion, 1)
     assert.equal(first.available, true)
+    assert.deepEqual(first.listPolars(), { value: [], state: { available: true } })
+    assert.deepEqual(first.getSelection(), {
+      value: { polarId: null, sailplanId: null, performanceFactor: 1, applyWaveCorrection: true },
+      state: { available: true }
+    })
+    const events = []
+    first.onChange(event => events.push(event.type))
     const handle = first.activePolar()
     let late
     app.onPropertyValues('polarManagement', history => { late = history.at(-1)?.value })
@@ -171,10 +178,14 @@ describe('plugin lifecycle', () => {
     plugin.stop()
     assert.deepEqual(late, { apiVersion: 1, available: false })
     assert.equal(first.available, false)
+    assert.deepEqual(events, ['stopped'])
+    assert.equal(first.listPolars().state.reason, 'provider_stopped')
     assert.equal(handle.speedAt({}).state.reason, 'provider_stopped')
     plugin.start({})
     assert.equal(late.available, true)
     assert.notEqual(late, first)
+    assert.deepEqual(late.listPolars(), { value: [], state: { available: true } })
+    assert.equal(first.getSelection().state.reason, 'provider_stopped')
     assert.equal(handle.speedAt({}).state.reason, 'provider_stopped')
     // Saving options may also call start again without a preceding stop.
     const second = late

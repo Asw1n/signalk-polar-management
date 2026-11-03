@@ -38,6 +38,249 @@ describe('live polar service', () => {
     fs.rmSync(directory, { recursive: true, force: true })
   })
 
+  it('lists sorted metadata and sailplans without selection state, validation or preparation', (t) => {
+    const document = polarSet()
+    store.save('set', document)
+    const invalid = table()
+    invalid.values.boatSpeedMatrix[0].pop()
+    fs.writeFileSync(path.join(directory, 'invalid.json'), JSON.stringify(invalid))
+    const prepare = t.mock.method(Polar, 'fromTable')
+    const result = service.api.listPolars()
+    assert.deepEqual(result.state, { available: true })
+    assert.deepEqual(result.value.map(entry => entry.id), ['first', 'invalid', 'second', 'set'])
+    assert.deepEqual(result.value[0], {
+      id: 'first', kind: 'polarTable', schemaVersion: '1.0.0',
+      name: null, boatType: null, sailnumber: null, source: null, notes: null,
+      year: null, sailplans: [], hasWaveCorrection: false
+    })
+    assert.deepEqual(result.value.at(-1), {
+      id: 'set', kind: document.kind, schemaVersion: document.schemaVersion,
+      name: document.name, boatType: document.boatType, sailnumber: document.sailnumber,
+      source: document.source, notes: document.notes, year: document.year,
+      sailplans: [{ id: 'jib', name: 'Headsail' }], hasWaveCorrection: true
+    })
+    for (const entry of result.value) {
+      for (const field of ['valid', 'isActive', 'activeSailplanId', 'axes', 'values', 'best']) {
+        assert.equal(Object.hasOwn(entry, field), false)
+      }
+    }
+    assert.equal(result.value[1].error, undefined)
+    assert.equal(prepare.mock.callCount(), 0)
+    assert.deepEqual([...service.requested.keys()], ['first'])
+    assert.deepEqual(errors, [])
+    assert.ok(Object.isFrozen(result.value.at(-1).sailplans[0]))
+    assert.throws(() => result.value.push({}), TypeError)
+  })
+
+  it('returns complete immutable v1/v2 documents without applying factors or preparing math', (t) => {
+    const document = polarSet()
+    store.save('set', document)
+    const prepare = t.mock.method(Polar, 'fromTable')
+    const prepareSet = typeof Polar.fromPolarSet === 'function' ? t.mock.method(Polar, 'fromPolarSet') : null
+    const requested = [...service.requested.keys()]
+    for (const [id, expected] of [['first', table()], ['set', document]]) {
+      const result = service.api.getPolar(id)
+      assert.deepEqual(result, {
+        value: { id, document: expected },
+        state: { available: true, valid: true, errors: [] }
+      })
+      assert.ok(Object.isFrozen(result))
+      assert.ok(Object.isFrozen(result.state.errors))
+      assert.ok(Object.isFrozen(result.value.document))
+    }
+    const detail = service.api.getPolar('set').value.document
+    assert.equal(detail.best.values.boatSpeedMatrix[0][1], null)
+    assert.deepEqual(detail.sailplans[0].sails, document.sailplans[0].sails)
+    assert.deepEqual(detail.waveCorrection, document.waveCorrection)
+    assert.throws(() => { detail.best.values.boatSpeedMatrix[0][0] = 123 }, TypeError)
+    assert.throws(() => { detail.waveCorrection.heights[0].axes.wavePeriod[0] = 123 }, TypeError)
+    assert.deepEqual(store.get('set'), document)
+    assert.equal(prepare.mock.callCount(), 0)
+    if (prepareSet) assert.equal(prepareSet.mock.callCount(), 0)
+    assert.deepEqual([...service.requested.keys()], requested)
+  })
+
+  it('distinguishes filesystem permission errors from missing documents', (t) => {
+    const read = fs.readFileSync
+    t.mock.method(fs, 'readFileSync', (file, ...args) => {
+      if (file === path.join(directory, 'second.json')) {
+        throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+      }
+      return read(file, ...args)
+    })
+    assert.equal(service.api.getPolar('second').state.reason, 'read_error')
+    assert.equal(service.api.getPolar('missing').state.reason, 'polar_not_found')
+    assert.equal(service.api.listPolars().value[1].error.reason, 'read_error')
+  })
+
+  it('returns fresh reads across metadata edits, replacements, copies, renames and deletion', () => {
+    const oldList = service.api.listPolars()
+    const oldDocument = service.api.getPolar('second')
+    store.modify('second', { id: 'second', name: 'Updated' })
+    assert.equal(service.api.listPolars().value[1].name, 'Updated')
+    assert.equal(service.api.getPolar('second').value.document.name, 'Updated')
+    assert.equal(oldList.value[1].name, null)
+    assert.equal(oldDocument.value.document.name, undefined)
+    store.save('second', polarSet())
+    assert.equal(service.api.getPolar('second').value.document.kind, 'polarSet')
+    store.copy('second', 'copy')
+    store.rename('second', 'renamed')
+    assert.deepEqual(service.api.listPolars().value.map(entry => entry.id), ['copy', 'first', 'renamed'])
+    assert.equal(service.api.getPolar('second').state.reason, 'polar_not_found')
+    store.delete('renamed')
+    assert.equal(service.api.getPolar('renamed').state.reason, 'polar_not_found')
+    store.save('renamed', table(12))
+    assert.equal(service.api.getPolar('renamed').value.document.values.boatSpeedMatrix[0][0], 12)
+    assert.deepEqual(errors, [])
+  })
+
+  it('returns parsed invalid documents unchanged with validation diagnostics', () => {
+    const invalid = polarSet()
+    invalid.best.values.boatSpeedMatrix[0].pop()
+    for (const document of [invalid, {}, null, [], 'not a polar', 42]) {
+      fs.writeFileSync(path.join(directory, 'invalid.json'), JSON.stringify(document))
+      const result = service.api.getPolar('invalid')
+      assert.deepEqual(result.value, { id: 'invalid', document })
+      assert.equal(result.state.available, true)
+      assert.equal(result.state.valid, false)
+      assert.ok(result.state.errors.length > 0)
+      assert.ok(result.state.errors.every(error => typeof error.path === 'string' && typeof error.message === 'string'))
+      assert.ok(Object.isFrozen(result.state.errors[0]))
+      assert.match(errors.at(-1), /Invalid polar 'invalid'/)
+      assert.equal(service.api.listPolars().state.available, true)
+    }
+  })
+
+  it('isolates malformed JSON and read errors in lists and returns explicit read failures', (t) => {
+    fs.writeFileSync(path.join(directory, 'broken.json'), '{')
+    const get = store.get.bind(store)
+    t.mock.method(store, 'get', id => {
+      if (id === 'second') throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+      return get(id)
+    })
+    const list = service.api.listPolars()
+    assert.equal(list.state.available, true)
+    assert.deepEqual(list.value.map(entry => entry.id), ['broken', 'first', 'second'])
+    assert.equal(list.value[0].error.reason, 'parse_error')
+    assert.equal(list.value[2].error.reason, 'read_error')
+    assert.equal(list.value[1].kind, 'polarTable')
+    for (const [id, reason] of [['broken', 'parse_error'], ['second', 'read_error'], ['missing', 'polar_not_found']]) {
+      const result = service.api.getPolar(id)
+      assert.equal(result.value, null)
+      assert.equal(result.state.available, false)
+      assert.equal(result.state.valid, null)
+      assert.equal(result.state.reason, reason)
+      assert.equal(typeof result.state.message, 'string')
+    }
+    assert.equal(errors.length, 4)
+    t.mock.method(store, 'list', () => { throw new Error('Cannot read directory') })
+    assert.deepEqual(service.api.listPolars(), {
+      value: null,
+      state: { available: false, reason: 'read_error', message: 'Cannot read directory' }
+    })
+    assert.match(errors.at(-1), /Cannot list polars/)
+  })
+
+  it('rejects malformed read IDs before accessing storage', (t) => {
+    const read = t.mock.method(store, 'get')
+    for (const id of ['', null, undefined, 7, '../first', '..\\first', 'a:b', 'a'.repeat(101)]) {
+      assert.throws(() => service.api.getPolar(id), TypeError)
+    }
+    assert.equal(read.mock.callCount(), 0)
+  })
+
+  it('describes current configured selection independently of document and math availability', (t) => {
+    const read = t.mock.method(store, 'get')
+    const old = service.api.getSelection()
+    assert.deepEqual(old, {
+      value: { polarId: 'first', sailplanId: null, performanceFactor: 0.9, applyWaveCorrection: true },
+      state: { available: true }
+    })
+    settings.activePolar = 'missing'
+    settings.activeSailplan = 'jib'
+    settings.performanceFactor = 0.7
+    settings.applyWaveCorrection = false
+    assert.deepEqual(service.api.getSelection().value, {
+      polarId: 'missing', sailplanId: 'jib', performanceFactor: 0.7, applyWaveCorrection: false
+    })
+    assert.equal(old.value.polarId, 'first')
+    assert.ok(Object.isFrozen(old.value))
+    settings.activePolar = ''
+    assert.deepEqual(service.api.getSelection().value, {
+      polarId: null, sailplanId: null, performanceFactor: 0.7, applyWaveCorrection: false
+    })
+    assert.equal(read.mock.callCount(), 0)
+  })
+
+  it('notifies service subscribers of all documents and settings while preserving handle filtering', () => {
+    const all = []
+    const active = []
+    const specific = []
+    service.api.onChange(() => { throw new Error('Catalog listener failed') })
+    const unsubscribe = service.api.onChange(event => {
+      all.push(event)
+      if (event.type === 'saved') {
+        assert.equal(service.api.getPolar(event.ids[0]).state.valid, true)
+      }
+    })
+    service.api.activePolar().onChange(event => active.push(event.type))
+    service.api.polar('second').onChange(event => specific.push(event.type))
+    assert.deepEqual(all, [])
+    store.save('third', table())
+    store.modify('third', { id: 'third', name: 'New name' })
+    store.copy('third', 'copy')
+    store.rename('third', 'renamed')
+    store.delete('renamed')
+    service.notify({ type: 'selection' })
+    service.notify({ type: 'performanceFactor' })
+    service.notify({ type: 'waveCorrection' })
+    assert.deepEqual(all.map(event => event.type), [
+      'saved', 'modified', 'copied', 'renamed', 'deleted', 'selection', 'performanceFactor', 'waveCorrection'
+    ])
+    assert.deepEqual(all[3].ids, ['third', 'renamed'])
+    assert.ok(all.every(event => Object.isFrozen(event) && Object.isFrozen(event.ids)))
+    assert.deepEqual(active, ['selection', 'performanceFactor', 'waveCorrection'])
+    assert.deepEqual(specific, [])
+    assert.equal(errors.length, 8)
+    assert.match(errors[0], /Polar change listener failed: Catalog listener failed/)
+    unsubscribe()
+    unsubscribe()
+    store.delete('copy')
+    assert.equal(all.length, 8)
+    assert.throws(() => service.api.onChange(null), /requires a function/)
+  })
+
+  it('permanently stops catalog reads and subscriptions without filesystem access', (t) => {
+    const events = []
+    service.api.onChange(event => {
+      events.push(event.type)
+      assert.equal(service.api.getSelection().state.reason, 'provider_stopped')
+    })
+    service.stop()
+    service.stop()
+    const list = t.mock.method(store, 'list')
+    const read = t.mock.method(store, 'get')
+    for (const result of [service.api.listPolars(), service.api.getPolar('first'), service.api.getSelection()]) {
+      assert.equal(result.value, null)
+      assert.equal(result.state.available, false)
+      assert.equal(result.state.reason, 'provider_stopped')
+      assert.ok(Object.isFrozen(result.state))
+    }
+    assert.equal(service.api.getPolar('first').state.valid, null)
+    assert.equal(list.mock.callCount(), 0)
+    assert.equal(read.mock.callCount(), 0)
+    assert.deepEqual(events, ['stopped'])
+    assert.equal(service.listeners.size, 0)
+    assert.throws(() => service.api.onChange(() => {}), /stopped/)
+    const next = new PolarService(store, () => settings, message => errors.push(message))
+    try {
+      assert.equal(next.api.listPolars().state.available, true)
+      assert.equal(service.api.listPolars().state.reason, 'provider_stopped')
+    } finally {
+      next.stop()
+    }
+  })
+
   it('prepares v2 best for existing live handles or explicitly reports unsupported math', (t) => {
     const document = polarSet()
     store.save('set', document)
