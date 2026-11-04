@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0 - 2026-11-04
 
 ### Added
 - Extend the in-process API with `listPolars()`, `getPolar(id)`, `getSelection()` and service-wide `onChange(callback)`. Reads return fresh, deeply immutable results without preparing calculation tables. Lists omit validation and active flags; complete document reads preserve readable invalid data and report validity separately in `state`. Existing calculation handles and API version 1 remain unchanged.
