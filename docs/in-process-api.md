@@ -361,16 +361,6 @@ Other result states, including `invalid_input` and `no_data`, come from
 polar-math. Unavailable calculations do not throw. Invalid handle acquisition
 arguments and invalid subscription callbacks throw descriptive errors.
 
-Published `polar-math` 1.1.1 does not implement v2. A valid v2 resource therefore
-returns `unsupported_math` from these handles and reports a descriptive plugin
-error at preparation time, rather than claiming the resource is invalid or
-silently using v1 data. Storage, numeric table display and export are independent
-of math readiness. A compatible released math dependency is still required for
-production v2 calculations; unreleased integration verification does not enable
-them automatically. All resource/delta consumers must support v2 before a v2
-active document is acknowledged. The service remains `apiVersion: 1` with the
-same four calculation methods and unchanged result shapes.
-
 ## Change subscriptions
 
 `handle.onChange(callback)` returns an idempotent unsubscribe function. It does
