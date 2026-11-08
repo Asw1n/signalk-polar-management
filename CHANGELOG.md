@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Emit Signal K v2 resource-change notifications for polar mutations through custom endpoints, including imports, edits, copies, renames, deletions and restored rollback state, without duplicating standard Resources API notifications.
+
 ## 1.6.0 - 2026-11-04
 
 ### Added

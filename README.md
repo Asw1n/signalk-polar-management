@@ -261,6 +261,15 @@ requires `id` and optionally accepts `name`, `boatType`, `sailnumber`, `notes`
 and integer `year` (empty strings clear text fields, `null` clears the year).
 The rename API remains available for compatibility.
 
+Custom endpoint mutations (imports, copies, document edits, renames and deletes)
+emit Signal K v2 deltas at `resources.polars.<id>` with the complete stored
+document, or `null` for deletion. Renames announce removal of the old ID and
+the document at the new ID. Rollbacks announce the restored resource state.
+Standard Resources API writes rely on the server's own deltas, without duplicate
+plugin notifications. Stopping the plugin does not announce resource deletion:
+the documents remain stored. Resource listings remain lightweight metadata
+summaries; these notifications do not change the listing or document-read APIs.
+
 ## Why this is useful
 
 This plugin is most useful when used together with other sailing apps in Signal K. Those apps can do the actual performance calculations, routing help, or sailing analysis, but they need a good polar to work with.

@@ -24,6 +24,8 @@ module.exports = (app) => {
   let importService = null
   let exportService = null
   let polarService = null
+  let unsubscribeResourceChanges = null
+  let suppressNextResourceDelta = false
   let activePolarPublished = false
   let performanceFactorPublished = false
   let publishedWaveValue // undefined until first wave-correction publication
@@ -267,6 +269,34 @@ module.exports = (app) => {
     publishedSailPlan = undefined
   }
 
+  // Store mutations are synchronous; consume suppression before notifying other
+  // listeners so a listener's custom mutation still publishes its own delta.
+  function resourceApiMutation(operation) {
+    suppressNextResourceDelta = true
+    try {
+      return operation()
+    } finally {
+      suppressNextResourceDelta = false
+    }
+  }
+
+  function publishResourceChanges(change) {
+    if (!['saved', 'modified', 'renamed', 'copied', 'deleted'].includes(change.type)) return
+    if (suppressNextResourceDelta) {
+      suppressNextResourceDelta = false
+      return
+    }
+    try {
+      const values = change.ids.map(id => ({
+        path: `resources.${RESOURCE_TYPE}.${id}`,
+        value: store.exists(id) ? store.get(id) : null
+      }))
+      app.handleMessage(plugin.id, { updates: [{ values }] }, 2)
+    } catch (error) {
+      app.setPluginError(`Failed to publish polar resource change: ${error.message}`)
+    }
+  }
+
   plugin.start = (options) => {
     if (polarService) plugin.stop()
     settings = { activePolar: '', activeSailplan: '', performanceFactor: DEFAULT_PERFORMANCE_FACTOR, applyWaveCorrection: DEFAULT_APPLY_WAVE_CORRECTION, ...options }
@@ -295,7 +325,7 @@ module.exports = (app) => {
           return store.get(id)
         },
         setResource: async (id, value) => {
-          store.save(id, value)
+          resourceApiMutation(() => store.save(id, value))
           if (id === settings.activePolar) {
             refreshApplyWaveCorrection()
             refreshIdentity()
@@ -305,7 +335,7 @@ module.exports = (app) => {
           if (settings.activePolar === id) {
             throw new Error(`Cannot delete '${id}': it is the active polar`)
           }
-          store.delete(id)
+          resourceApiMutation(() => store.delete(id))
         }
       }
     })
@@ -325,10 +355,13 @@ module.exports = (app) => {
 
     app.setPluginStatus(`Managing ${store.list().length} polar(s)`)
     polarService = new PolarService(store, () => settings, (message) => app.setPluginError(message))
+    unsubscribeResourceChanges = polarService.api.onChange(publishResourceChanges)
     app.emitPropertyValue('polarManagement', polarService.api)
   }
 
   plugin.stop = () => {
+    unsubscribeResourceChanges?.()
+    unsubscribeResourceChanges = null
     if (polarService) {
       polarService.stop()
       polarService = null

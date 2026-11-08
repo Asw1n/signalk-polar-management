@@ -58,7 +58,7 @@ function createFakeApp(dataDir) {
   const propertyListeners = new Set()
   return {
     getDataDirPath: () => dataDir,
-    handleMessage: (source, delta) => messages.push({ source, delta }),
+    handleMessage: (source, delta, version) => messages.push({ source, delta, version }),
     setPluginStatus: () => {},
     setPluginError: () => {},
     savePluginOptions: (opts, cb) => {
@@ -197,6 +197,103 @@ describe('plugin lifecycle', () => {
     plugin.stop()
     assert.equal(early.length, 6)
     assert.equal(app._propertyHistory.length, 7)
+  })
+
+  it('publishes custom resource mutations once as v2 deltas and preserves lightweight listings', async () => {
+    const app = createFakeApp(dataDir)
+    const plugin = createTestPlugin(app)
+    const routes = {}
+    const router = {}
+    for (const method of ['get', 'put', 'post', 'delete']) {
+      router[method] = (route, handler) => { routes[`${method.toUpperCase()} ${route}`] = handler }
+    }
+    plugin.registerWithRouter(router)
+    const deltas = () => app._messages.filter(message => message.version === 2)
+    const request = (route, params, body) => {
+      let status = 200
+      let response
+      const res = {
+        status: code => { status = code; return res },
+        json: value => { response = value },
+        end: () => {}
+      }
+      routes[route]({ params, body, query: {} }, res)
+      return { status, body: response }
+    }
+    const expectDelta = values => {
+      assert.deepEqual(deltas().at(-1), {
+        source: 'signalk-polar-management', version: 2,
+        delta: { updates: [{ values }] }
+      })
+    }
+    plugin.start({})
+    try {
+      let provider = app._registeredProviders.at(-1).methods
+      const document = polarSet()
+      await provider.setResource('boat', document)
+      await provider.setResource('temporary', document)
+      await provider.deleteResource('temporary')
+      await assert.rejects(provider.setResource('invalid', {}))
+      await assert.rejects(provider.deleteResource('missing'))
+      assert.equal(deltas().length, 0)
+      const listed = (await provider.listResources()).boat
+      assert.equal(listed.name, document.name)
+      assert.equal(Object.hasOwn(listed, 'best'), false)
+      assert.equal(Object.hasOwn(listed, 'sailplans'), false)
+
+      assert.equal(request('POST /polars/:id/copy', { id: 'boat' }, { id: 'copy' }).status, 200)
+      expectDelta([{ path: 'resources.polars.copy', value: document }])
+      const updated = { ...document, name: 'Updated' }
+      assert.equal(request('PUT /polars/:id', { id: 'copy' }, updated).status, 200)
+      expectDelta([{ path: 'resources.polars.copy', value: updated }])
+      assert.equal(request('PUT /polars/:id/metadata', { id: 'copy' }, { id: 'renamed' }).status, 200)
+      expectDelta([
+        { path: 'resources.polars.copy', value: null },
+        { path: 'resources.polars.renamed', value: updated }
+      ])
+      assert.equal(request('POST /polars/:id/rename', { id: 'renamed' }, { id: 'legacy' }).status, 200)
+      expectDelta([
+        { path: 'resources.polars.renamed', value: null },
+        { path: 'resources.polars.legacy', value: updated }
+      ])
+      assert.equal(request('DELETE /polars/:id', { id: 'legacy' }).status, 204)
+      expectDelta([{ path: 'resources.polars.legacy', value: null }])
+      const imported = request('POST /imports/text/:format', { format: 'auto' }, { content: JSON.stringify(document) })
+      assert.equal(imported.status, 200)
+      expectDelta([{ path: `resources.polars.${imported.body.id}`, value: await provider.getResource(imported.body.id) }])
+      assert.equal(deltas().length, 6)
+
+      assert.equal(request('PUT /polars/:id', { id: 'boat' }, {}).status, 400)
+      assert.equal(request('DELETE /polars/:id', { id: 'missing' }).status, 404)
+      assert.equal(deltas().length, 6)
+      request('PUT /activePolar', {}, { id: 'boat', acknowledgeV2: true })
+      request('PUT /performanceFactor', {}, { value: 0.9 })
+      assert.equal(deltas().length, 6)
+
+      plugin.stop()
+      assert.equal(deltas().length, 6)
+      plugin.start({})
+      provider = app._registeredProviders.at(-1).methods
+      await provider.setResource('boat', document)
+      assert.equal(deltas().length, 6)
+      request('PUT /polars/:id', { id: 'boat' }, updated)
+      assert.equal(deltas().length, 7)
+      expectDelta([{ path: 'resources.polars.boat', value: updated }])
+
+      const errors = []
+      app.setPluginError = message => errors.push(message)
+      const handleMessage = app.handleMessage
+      app.handleMessage = (source, delta, version) => {
+        if (version === 2) throw new Error('Notification unavailable')
+        handleMessage(source, delta, version)
+      }
+      assert.equal(request('PUT /polars/:id', { id: 'boat' }, document).status, 200)
+      assert.deepEqual(await provider.getResource('boat'), document)
+      assert.deepEqual(errors, ['Failed to publish polar resource change: Notification unavailable'])
+      app.handleMessage = handleMessage
+    } finally {
+      plugin.stop()
+    }
   })
 
   it('registers a resource provider for type polars', () => {
@@ -398,7 +495,7 @@ describe('plugin lifecycle', () => {
           assert.equal(request('PUT /activePolar', { body: { id: null } }).status, 200)
           await provider.deleteResource('renamed')
           await assert.rejects(provider.getResource('renamed'), /not found/)
-          assert.ok(app._messages.every(message => (message.delta.updates[0].values || []).every(value =>
+          assert.ok(app._messages.filter(message => message.version !== 2).every(message => (message.delta.updates[0].values || []).every(value =>
             ['polars.activePolar', 'polars.performanceFactor', 'polars.applyWaveCorrection', 'polars.boatName', 'polars.sailPlan'].includes(value.path))))
         } finally {
           plugin.stop()
@@ -799,7 +896,11 @@ describe('plugin lifecycle', () => {
         params: { id: 'original' }, body: { id: 'original', year: 2026 }
       })
       assert.equal(request('GET /activePolar', {}).body.id, 'original')
-      assert.equal(app._messages.length, count)
+      assert.equal(app._messages.length, count + 1)
+      assert.deepEqual(app._messages.at(-1), {
+        source: 'signalk-polar-management', version: 2,
+        delta: { updates: [{ values: [{ path: 'resources.polars.original', value: { ...original, year: 2026 } }] }] }
+      })
       assert.equal((await provider.getResource('original')).year, 2026)
     })
 
@@ -827,7 +928,13 @@ describe('plugin lifecycle', () => {
       assert.deepEqual(await provider.getResource('original'), original)
       await assert.rejects(provider.getResource('new-id'), /not found/)
       assert.equal(request('GET /activePolar', {}).body.id, 'original')
-      assert.equal(app._messages.length, count)
+      const changes = app._messages.slice(count)
+      assert.equal(changes.length, 3)
+      assert.ok(changes.every(message => message.version === 2))
+      assert.deepEqual(changes.at(-1).delta.updates[0].values, [
+        { path: 'resources.polars.new-id', value: null },
+        { path: 'resources.polars.original', value: original }
+      ])
     })
   })
 
@@ -869,7 +976,20 @@ describe('plugin lifecycle', () => {
         json: value => { body = value },
         end: () => {}
       }
+      const count = app._messages.filter(message => message.version === 2).length
       routes[route]({ query: {}, ...req }, res)
+      const deltas = app._messages.filter(message => message.version === 2)
+      if (/^(PUT|POST|DELETE) \/polars\//.test(route)) {
+        if (status < 300) {
+          assert.equal(deltas.length, count + 1)
+          const id = req.params.id
+          assert.deepEqual(deltas.at(-1).delta.updates[0].values, [
+            { path: `resources.polars.${id}`, value: new PolarStore(path.join(dataDir, 'polars')).get(id) }
+          ])
+        } else {
+          assert.equal(deltas.length, count)
+        }
+      }
       return { status, body }
     }
 
